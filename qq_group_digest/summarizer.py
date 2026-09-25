@@ -90,7 +90,8 @@ def parse_digest(text, known, task, batch_id=None):
 
 def fingerprint(item):
     title, body = (item.title, item.body) if isinstance(item, Item) else (item["title"], item["body"])
-    return re.sub(r"\W+", "", (title + body).lower())
+    # Punctuation, URL case and title/body boundaries can change the meaning.
+    return title.strip(), body.strip()
 
 
 class LLMClient:

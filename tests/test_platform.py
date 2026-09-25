@@ -124,3 +124,57 @@ def test_standalone_guard_is_registered(tmp_path):
     guard = get_guard(context, tmp_path)
     assert guard.scheduling_version == 3
     assert get_guard(context, tmp_path) is guard
+
+
+async def test_read_failure_cooldown_survives_reload_and_blocks_other_queries(store, settings, journal):
+    class FailingBot(Bot):
+        async def call_action(self, action, **params):
+            self.calls.append(action)
+            raise TimeoutError
+
+    bot = FailingBot()
+    first = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    with pytest.raises(Deferred):
+        await first.read("get_status")
+    second = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW + 1)
+    with pytest.raises(Deferred, match="冷却"):
+        await second.history_page("123456789", 20)
+    assert len(bot.calls) == 1
+
+
+async def test_reconnection_rejects_old_history_cursor_before_call(store, settings, journal):
+    bot = Bot()
+    bot.result = {"messages": []}
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    await adapter.history_page("123456789", 20)
+    generation = adapter.generation
+    bot._wsr_api_clients["111111111"] = object()
+    with pytest.raises(Deferred, match="连接发生变化"):
+        await adapter.history_page("123456789", 20, "123", generation=generation)
+    assert len(bot.calls) == 1
+
+
+async def test_connection_changed_during_first_page_discards_response(store, settings, journal):
+    class ReconnectingBot(Bot):
+        async def call_action(self, action, **params):
+            self._wsr_api_clients["111111111"] = object()
+            return {"messages": []}
+
+    adapter = Adapter("platform", ReconnectingBot(), store, lambda: settings, journal, clock=lambda: NOW)
+    with pytest.raises(Deferred, match="连接发生变化"):
+        await adapter.history_page("123456789", 20)
+
+
+async def test_explicit_account_not_blocked_by_unrelated_offline_adapter(store, task, settings, journal):
+    from dataclasses import replace
+
+    online, offline = Bot(), Bot()
+    offline._wsr_api_clients = {}
+    platforms = [
+        SimpleNamespace(meta=lambda: SimpleNamespace(id="online", name="aiocqhttp"), bot=online),
+        SimpleNamespace(meta=lambda: SimpleNamespace(id="offline", name="aiocqhttp"), bot=offline),
+    ]
+    context = SimpleNamespace(platform_manager=SimpleNamespace(get_insts=lambda: platforms))
+    router = Router(context, store, lambda: settings, journal)
+    adapter = await router.resolve(replace(task, bot_qq="111111111"))
+    assert adapter.bot is online

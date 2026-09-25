@@ -18,7 +18,7 @@ from .qq_group_digest.store import Store
 from .qq_group_digest.summarizer import LLMClient
 
 
-@register("astrbot_plugin_qq_group_digest", "JunieXD", "定时提炼 QQ 群聊并可靠投递摘要", "0.1.0")
+@register("astrbot_plugin_qq_group_digest", "JunieXD", "定时提炼 QQ 群聊并可靠投递摘要", "0.1.1")
 class QQGroupDigest(Star):
     def __init__(self, context: Context, config=None):
         super().__init__(context=context, config=config)
@@ -46,7 +46,7 @@ class QQGroupDigest(Star):
             )
             await self.service.start()
             self.start_error = ""
-            logger.info("QQ 群聊摘要 v0.1.0 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。")
+            logger.info("QQ 群聊摘要 v0.1.1 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。")
         except BaseException as exc:
             if self.journal:
                 self.journal.record("初始化失败", error_type=type(exc).__name__)
@@ -67,11 +67,15 @@ class QQGroupDigest(Star):
                 if self.store:
                     await self.store.close()
             finally:
-                if self.journal:
-                    self.journal.close()
-                if self.lock:
-                    self.lock.close()
-                self.service = self.store = self.journal = self.lock = None
+                try:
+                    if self.journal:
+                        self.journal.close()
+                finally:
+                    try:
+                        if self.lock:
+                            self.lock.close()
+                    finally:
+                        self.service = self.store = self.journal = self.lock = None
 
     @filter.command("群摘要", alias={"qgdigest"})
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
@@ -79,10 +83,9 @@ class QQGroupDigest(Star):
     async def digest_command(self, event):
         event.stop_event()
         if not event.is_admin():
-            yield event.plain_result("这个命令仅供 AstrBot 管理员私聊使用。")
             return
         service = self.service
-        if service is None:
+        if service is None or service.stopping:
             yield event.plain_result(self.start_error or "插件正在停止，请稍后重试。")
             return
         current = asyncio.current_task()

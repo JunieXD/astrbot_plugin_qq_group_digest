@@ -9,6 +9,11 @@ import re
 from .config import IncompleteHistory
 from .models import Message
 
+PARTIAL_FORWARD_NOTE = "部分合并转发未完整展开。"
+SKIPPED_FORWARD_NOTE = "本期未展开合并转发内容。"
+MEDIA_NOTE = "摘要依据可读取的文字；图片、语音和视频正文未识别。"
+HISTORY_NOTES = frozenset((PARTIAL_FORWARD_NOTE, SKIPPED_FORWARD_NOTE, MEDIA_NOTE))
+
 
 def segments(value):
     if isinstance(value, list):
@@ -103,9 +108,14 @@ class HistoryReader:
 
     async def read(self, adapter, task, start, end):
         found, cursor, anchors, previous = {}, None, set(), None
+        total_chars = 0
         crossed = False
+        generation = None
         for _ in range(self.limits.max_pages):
-            page = await adapter.history_page(task.source_group, self.limits.page_size, cursor)
+            page = await adapter.history_page(
+                task.source_group, self.limits.page_size, cursor, generation=generation
+            )
+            generation = adapter.generation
             if not page:
                 # NapCat can filter unparseable native messages into an empty array.
                 # That does not establish that the requested boundary was reached.
@@ -115,6 +125,10 @@ class HistoryReader:
             oldest = ordered[0]
             for message in ordered:
                 if start <= message.time < end and message.sender != adapter.account:
+                    old = found.get(message.key)
+                    total_chars += len(message.text) - (len(old.text) if old else 0)
+                    if total_chars > self.limits.max_history_chars:
+                        raise IncompleteHistory("本期文字超过读取上限；请增加发送次数或调整高级限制。")
                     found[message.key] = message
             if len(found) > self.limits.max_messages:
                 raise IncompleteHistory("本期消息超过读取上限；请增加发送次数或调整高级限制。")
@@ -131,8 +145,6 @@ class HistoryReader:
         if not crossed:
             raise IncompleteHistory("历史读取达到页数上限，尚未覆盖时间窗口。")
         messages = sorted(found.values(), key=lambda m: (m.time, m.seq, m.key))
-        if sum(len(m.text) for m in messages) > self.limits.max_history_chars:
-            raise IncompleteHistory("本期文字超过读取上限；请增加发送次数或调整高级限制。")
         notes, expanded, failed, seen_forwards = [], 0, 0, set()
         if task.read_forwards:
             for message in messages:
@@ -141,6 +153,7 @@ class HistoryReader:
                         continue
                     seen_forwards.add(fid)
                     expanded += 1
+                    before = len(message.text)
                     try:
                         result = await adapter.read("get_forward_msg", message_id=fid)
                         nodes = result.get("messages") if isinstance(result, dict) else None
@@ -161,17 +174,18 @@ class HistoryReader:
                         # Optional enrichment failure never erases the enclosing text.
                         self.journal.record("转发内容未展开", error_type=type(exc).__name__)
                         failed += 1
+                    total_chars += len(message.text) - before
+                    if total_chars > self.limits.max_history_chars:
+                        raise IncompleteHistory("展开后的文字超过本期上限，已停止生成。")
             total = sum(len(m.forward_ids) for m in messages)
             if failed or total > expanded:
-                notes.append("部分合并转发未完整展开。")
+                notes.append(PARTIAL_FORWARD_NOTE)
         elif any(m.forward_ids for m in messages):
-            notes.append("本期未展开合并转发内容。")
+            notes.append(SKIPPED_FORWARD_NOTE)
         if any(
             any(label in m.text for label in ("图片未识别", "语音未转写", "视频未解析")) for m in messages
         ):
-            notes.append("摘要依据可读取的文字；图片、语音和视频正文未识别。")
-        if sum(len(m.text) for m in messages) > self.limits.max_history_chars:
-            raise IncompleteHistory("展开后的文字超过本期上限，已停止生成。")
+            notes.append(MEDIA_NOTE)
         self.journal.record(
             "历史读取完成",
             group=task.source_group,

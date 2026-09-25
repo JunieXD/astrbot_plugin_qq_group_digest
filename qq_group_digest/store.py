@@ -27,14 +27,17 @@ class Store:
         future = asyncio.get_running_loop().run_in_executor(self.worker, getattr(self, method), *args)
         cancelled = False
         # A reload must wait for an already submitted transaction before releasing the instance lock.
-        while True:
+        while not future.done():
             try:
-                result = await asyncio.shield(future)
-                break
+                await asyncio.shield(future)
             except asyncio.CancelledError:
                 cancelled = True
             except (sqlite3.Error, OSError) as exc:
                 raise DigestError("摘要进度无法写入，请检查磁盘空间和数据目录权限。") from exc
+        try:
+            result = future.result()
+        except (sqlite3.Error, OSError) as exc:
+            raise DigestError("摘要进度无法写入，请检查磁盘空间和数据目录权限。") from exc
         if cancelled:
             raise asyncio.CancelledError
         return result
@@ -88,8 +91,10 @@ class Store:
 
     def close_db(self):
         if hasattr(self, "db"):
-            self.db.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            self.db.close()
+            try:
+                self.db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            finally:
+                self.db.close()
 
     def get(self, key, default=None):
         row = self.db.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
@@ -164,10 +169,23 @@ class Store:
 
     def active(self, task, now):
         rows = self.db.execute(
-            "SELECT * FROM runs WHERE task=? AND status IN ('queued','fetched','generated') AND next_try<=? ORDER BY end",
+            """SELECT * FROM runs WHERE task=? AND next_try<=? AND (
+                status IN ('queued','fetched') OR (status='generated' AND EXISTS (
+                    SELECT 1 FROM deliveries WHERE run=runs.id AND state IN ('pending','blocked')
+                ))) ORDER BY end""",
             (task, now),
         )
         return [self.decode_run(r) for r in rows]
+
+    def attention(self, task, limit=5):
+        condition = """task=? AND (status='failed' OR EXISTS (
+            SELECT 1 FROM deliveries WHERE run=runs.id AND state IN ('unknown','blocked')
+        ))"""
+        total = self.db.execute("SELECT COUNT(*) FROM runs WHERE " + condition, (task,)).fetchone()[0]
+        rows = self.db.execute(
+            "SELECT * FROM runs WHERE " + condition + " ORDER BY end LIMIT ?", (task, limit)
+        )
+        return [self.decode_run(r) for r in rows], total
 
     def bind(self, rid, account, platform):
         row = self.run(rid)
@@ -188,6 +206,16 @@ class Store:
                 "UPDATE runs SET snapshot=?,notes=?,status='fetched',error='' WHERE id=?",
                 (encode(snapshot), encode(notes), rid),
             )
+
+    def reconfigure(self, rid, config):
+        row = self.run(rid)
+        if row["status"] not in {"queued", "fetched"} or encode(row["config"]) == encode(config):
+            return
+        reread = any(row["config"].get(k) != config.get(k) for k in ("read_forwards", "forward_limit"))
+        with self.db:
+            self.db.execute("UPDATE runs SET config=? WHERE id=?", (encode(config), rid))
+            if reread:
+                self.db.execute("UPDATE runs SET snapshot=NULL,status='queued' WHERE id=?", (rid,))
 
     def generated(self, rid, digest, deliveries):
         with self.db:
@@ -231,6 +259,8 @@ class Store:
                     (rid,),
                 ).rowcount
             if count:
+                with self.db:
+                    self.db.execute("UPDATE runs SET failures=0,next_try=0,error='' WHERE id=?", (rid,))
                 return
         if row["status"] != "failed":
             raise DigestError("这个批次没有停止生成；结果不明的发送请使用核对或跳过。")
@@ -333,6 +363,10 @@ class Store:
                     "UPDATE deliveries SET state='skipped',error='已跳过' WHERE run=? AND state IN ('pending','unknown','blocked')",
                     (rid,),
                 )
+                self.db.execute(
+                    "UPDATE runs SET status='complete',error='管理员已跳过本期摘要' WHERE id=? AND status IN ('queued','fetched','failed')",
+                    (rid,),
+                )
         self.finish(rid)
 
     def expire_pending(self, rid):
@@ -340,6 +374,16 @@ class Store:
             self.db.execute(
                 "UPDATE deliveries SET state='skipped',error='超过补报时长，停止投递旧摘要' WHERE run=? AND state IN ('pending','blocked')",
                 (rid,),
+            )
+        self.finish(rid)
+
+    def remove_target(self, rid, target):
+        # A configuration edit only cancels requests we know were never submitted.
+        # Unknown sends still need explicit administrator reconciliation or skipping.
+        with self.db:
+            self.db.execute(
+                "UPDATE deliveries SET state='skipped',error='目标群已移除' WHERE run=? AND target=? AND state IN ('pending','blocked')",
+                (rid, target),
             )
         self.finish(rid)
 

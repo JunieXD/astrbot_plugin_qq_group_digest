@@ -10,12 +10,13 @@ from .conftest import NOW, raw_message
 
 class HistoryAPI:
     account = "111111111"
+    generation = 1
 
     def __init__(self, pages):
         self.pages = pages
         self.cursors = []
 
-    async def history_page(self, group, count, cursor=None):
+    async def history_page(self, group, count, cursor=None, **kwargs):
         self.cursors.append(cursor)
         return self.pages[min(len(self.cursors) - 1, len(self.pages) - 1)]
 
@@ -117,3 +118,21 @@ def test_card_parser_does_not_expose_entire_json():
 async def test_empty_parsed_page_does_not_prove_full_coverage(task, journal):
     with pytest.raises(IncompleteHistory, match="空页"):
         await HistoryReader(Limits(), journal).read(HistoryAPI([[]]), task, NOW - 100, NOW)
+
+
+async def test_text_limit_stops_pagination_before_more_network_reads(task, journal):
+    api = HistoryAPI([[raw_message(9, NOW - 1, "x" * 200)], [raw_message(1, NOW - 1000)]])
+    with pytest.raises(IncompleteHistory, match="文字"):
+        await HistoryReader(replace(Limits(), max_history_chars=100), journal).read(api, task, NOW - 100, NOW)
+    assert api.cursors == [None]
+
+
+async def test_reader_passes_connection_generation_with_cursor(task, journal):
+    class CheckedAPI(HistoryAPI):
+        async def history_page(self, group, count, cursor=None, *, generation=None):
+            assert generation == (None if cursor is None else self.generation)
+            return await super().history_page(group, count, cursor)
+
+    api = CheckedAPI([[raw_message(9, NOW - 1)], [raw_message(1, NOW - 1000)]])
+    messages, _ = await HistoryReader(Limits(), journal).read(api, task, NOW - 100, NOW)
+    assert len(messages) == 1

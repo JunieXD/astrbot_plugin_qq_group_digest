@@ -8,7 +8,7 @@ import pytest
 from qq_group_digest.config import MODES, DigestError, Limits
 from qq_group_digest.models import Digest, Item, Message
 from qq_group_digest.render import make_payloads, payload_fingerprint
-from qq_group_digest.summarizer import LLMClient, Summarizer, parse_digest, usable_completion
+from qq_group_digest.summarizer import LLMClient, Summarizer, fingerprint, parse_digest, usable_completion
 
 from .conftest import NOW
 
@@ -169,3 +169,15 @@ def test_fingerprint_preserves_forward_node_boundaries():
     a = {"messages": [{"data": {"content": [{"type": "text", "data": {"text": t}}]}} for t in ["a", "b"]]}
     b = {"messages": [{"data": {"content": [{"type": "text", "data": {"text": "ab"}}]}}]}
     assert payload_fingerprint(a) != payload_fingerprint(b)
+
+
+@pytest.mark.parametrize(
+    "first,second",
+    [
+        (("课程", "C++"), ("课程", "C")),
+        (("链接", "https://example.org/A"), ("链接", "https://example.org/a")),
+        (("甲乙", "丙"), ("甲", "乙丙")),
+    ],
+)
+def test_meaningful_punctuation_case_and_field_boundaries_not_deduplicated(first, second):
+    assert fingerprint(Item(*first, ("m1",))) != fingerprint(Item(*second, ("m2",)))

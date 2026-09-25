@@ -1,6 +1,7 @@
 """Private AstrBot-administrator operations, with no implicit group publication."""
 
 import re
+from collections import Counter
 
 from .config import DigestError, Task, identifier
 from .render import full_text
@@ -17,10 +18,10 @@ HELP = """群聊摘要（仅 AstrBot 管理员私聊使用）：
 /群摘要 跳过 批次编号 [目标群号]
 预览会调用模型，仅在私聊返回，不推进定时进度。
 执行会处理最近一个计划时点，按配置投递；已处理的批次不会重复生成。
-核对只查历史；跳过会放弃指定批次尚未完成的投递，不会重新发送。"""
+核对只查历史；跳过会放弃指定批次的生成或尚未完成的投递，不会重新发送。"""
 
 LABELS = {
-    "superseded": "已并入后续补报",
+    "superseded": "已过期或并入补报",
     "queued": "等待读取",
     "fetched": "等待生成",
     "generated": "等待投递",
@@ -56,24 +57,34 @@ class Commands:
             )
             result = []
             for task in tasks:
-                runs = await self.s.store.call("latest", task.key, 3)
+                recent = await self.s.store.call("latest", task.key, 3)
+                attention, attention_count = await self.s.store.call("attention", task.key)
+                runs = list({r["id"]: r for r in [*attention, *recent]}.values())
                 active = await self.s.allowed(task.key)
                 due = next_boundary(task, self.s.clock())
                 result.append(
                     f"{task.label}（{task.source_group}）：{'已启用' if active else '已暂停/未启用'}\n"
                     f"下一计划时间：{period_text(task, due, due).split('—')[0]}（{task.timezone}）"
                 )
+                if attention_count:
+                    result.append(f"需要处理 {attention_count} 个批次，优先显示最早的未解决记录。")
                 for run in runs:
                     result.append(
                         f"{run['id'][:12]}：{LABELS[run['status']]} · {period_text(task, run['start'], run['end'])}"
                     )
                     if run["error"]:
                         result.append(run["error"])
-                    for row in await self.s.store.call("deliveries", run["id"]):
+                    rows = await self.s.store.call("deliveries", run["id"])
+                    for target in dict.fromkeys(r["target"] for r in rows):
+                        group_rows = [r for r in rows if r["target"] == target]
+                        counts = Counter(r["state"] for r in group_rows)
+                        states = "、".join(f"{LABELS[state]} {n} 条" for state, n in counts.items())
+                        errors = list(dict.fromkeys(r["error"] for r in group_rows if r["error"]))
                         result.append(
-                            f"  群 {row['target']} 第 {row['part'] + 1} 条：{LABELS[row['state']]}"
-                            + (f"（{row['error']}）" if row["error"] else "")
+                            f"  群 {target}：{states}" + (f"（{'；'.join(errors)}）" if errors else "")
                         )
+                if attention_count > len(attention):
+                    result.append("还有其他未解决记录；处理以上批次后，再查看状态即可。")
             return "\n".join(result) or "尚未配置来源群，请先在插件配置中添加任务。"
         if action in {"预览", "执行", "暂停", "恢复"} and len(parts) == 2:
             task = self.s.settings().find(identifier(parts[1], "来源群"))
@@ -117,9 +128,7 @@ class Commands:
                     r["target"] for r in await self.s.store.call("deliveries", run["id"])
                 }:
                     raise DigestError("这个批次没有向指定目标群投递的计划。")
-                if run["status"] in {"queued", "fetched", "failed"}:
-                    raise DigestError("该批次还未生成摘要，没有可跳过的投递；可先暂停来源群。")
                 await self.s.store.call("skip", run["id"], target)
                 self.s.journal.record("管理员跳过投递", run=run["id"], target=target)
-                return "已跳过指定批次尚未完成的投递。"
+                return "已跳过指定批次的生成或尚未完成的投递。"
         return HELP

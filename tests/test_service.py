@@ -169,3 +169,86 @@ async def test_failed_cron_cleanup_still_stops_workers(store, settings, journal)
     job = service.loop_task
     await service.stop()
     assert job.cancelled()
+
+
+async def test_cancelled_cron_delete_does_not_hang_reload(store, settings, journal):
+    import asyncio
+
+    service, _ = make_service(store, settings, journal)
+    service.cron_ids = ["cancelled-job"]
+
+    async def cancelled(*args):
+        raise asyncio.CancelledError
+
+    service.context.cron_manager.delete_job = cancelled
+    job = service.loop_task = asyncio.create_task(asyncio.sleep(100))
+    await asyncio.wait_for(service.stop(), 1)
+    assert job.cancelled()
+    await asyncio.wait_for(service.stop(), 1)
+
+
+async def test_cancelled_stop_waits_for_worker_cleanup(store, settings, journal):
+    import asyncio
+
+    service, _ = make_service(store, settings, journal)
+    started, cleaning, finish = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def worker():
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cleaning.set()
+            await finish.wait()
+
+    job = service.loop_task = asyncio.create_task(worker())
+    await started.wait()
+    stopping = asyncio.create_task(service.stop())
+    await cleaning.wait()
+    stopping.cancel()
+    await asyncio.sleep(0)
+    assert not stopping.done()
+    finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(stopping, 1)
+    assert job.done()
+
+
+async def test_retry_uses_new_prompt_and_mode_without_moving_window(store, task, settings, journal):
+    service, api = make_service(store, settings, journal)
+    rid = await service.ensure_window(task, manual=True)
+    before = await store.call("run", rid)
+    api.history = [raw_message(10, before["end"] - 1), raw_message(1, before["read_start"] - 1)]
+    await store.call("fail", rid, "生成失败", 0, 1)
+    changed = replace(task, focus="只总结新通知", mode="合并转发·分条")
+    service.settings = lambda: replace(settings, tasks=(changed,))
+    seen = []
+
+    class CheckClient:
+        async def generate(self, task, adapter, prompt, **kwargs):
+            seen.append(task.focus)
+            return output(prompt=prompt)
+
+    service.client = CheckClient()
+    await store.call("retry", rid)
+    await service.step(changed)
+    after = await store.call("run", rid)
+    assert (after["start"], after["end"]) == (before["start"], before["end"])
+    assert seen == [changed.focus]
+    assert [a for a, _ in api.sent] == ["send_group_forward_msg"]
+
+
+async def test_changed_history_options_reread_snapshot_and_refresh_notes(store, task, settings, journal):
+    from qq_group_digest.history import SKIPPED_FORWARD_NOTE
+
+    service, api = make_service(store, settings, journal)
+    rid = await service.ensure_window(task, manual=True)
+    run = await store.call("run", rid)
+    await store.call("fetched", rid, [], [SKIPPED_FORWARD_NOTE])
+    changed = replace(task, read_forwards=True)
+    service.settings = lambda: replace(settings, tasks=(changed,))
+    api.history = [raw_message(10, run["end"] - 1), raw_message(1, run["read_start"] - 1)]
+    await service.step(changed)
+    latest = await store.call("run", rid)
+    assert latest["digest"]["items"]
+    assert SKIPPED_FORWARD_NOTE not in latest["notes"]

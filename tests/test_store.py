@@ -152,3 +152,34 @@ async def test_preview_shares_daily_model_budget_with_scheduled_round(store, tas
     with pytest.raises(Deferred):
         await store.call("reserve_llm", rid, NOW + 1, 1, 10)
     assert (await store.call("run", rid))["llm_calls"] == 0
+
+
+async def test_removing_target_keeps_unknown_evidence(store, task):
+    rid = await prepare(store, task)
+    await store.call("delivery_result", f"{rid}:987654321:0", "unknown")
+    await store.call("remove_target", rid, "987654321")
+    await store.call("remove_target", rid, "888888888")
+    rows = await store.call("deliveries", rid)
+    assert [r["state"] for r in rows] == ["skipped", "unknown"]
+    assert (await store.call("run", rid))["status"] == "generated"
+    await store.call("cleanup", NOW + 60 * 86400, 2, 30)
+    assert await store.call("run", rid) is not None
+
+
+async def test_generated_payload_never_changes_on_config_edit(store, task):
+    from dataclasses import replace
+
+    rid = await prepare(store, task)
+    before = await store.call("deliveries", rid)
+    await store.call("reconfigure", rid, replace(task, mode="合并转发·分条", focus="新需求").dump())
+    assert (await store.call("run", rid))["config"]["focus"] == task.focus
+    assert await store.call("deliveries", rid) == before
+
+
+async def test_retry_blocked_delivery_clears_run_backoff(store, task):
+    rid = await prepare(store, task)
+    await store.call("defer_delivery", f"{rid}:987654321:0", "准备失败", NOW + 1000, 1)
+    await store.call("fail", rid, "连接暂不可用", NOW + 1000, 3)
+    await store.call("retry", rid)
+    assert (await store.call("run", rid))["next_try"] == 0
+    assert (await store.call("run", rid))["error"] == ""

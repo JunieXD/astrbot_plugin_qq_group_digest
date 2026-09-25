@@ -47,8 +47,11 @@ class Adapter:
         if until > self.clock():
             raise Deferred("连接恢复后的等待尚未结束。", until - self.clock())
 
-    async def transport(self, action, **params):
+    async def transport(self, action, *, generation=None, **params):
         await self.check_connection()
+        if generation is not None and generation != self.generation:
+            raise Deferred("读取历史时连接发生变化，将从第一页重新读取。")
+        started_generation = self.generation
         if action in {"send_group_msg", "send_group_forward_msg"}:
             await self.ready_to_send()
         if self.account:
@@ -56,6 +59,10 @@ class Adapter:
         result = await asyncio.wait_for(
             self.bot.call_action(action=action, **params), self.settings().limits.api_timeout_seconds
         )
+        if action == "get_group_msg_history":
+            await self.check_connection()
+            if started_generation != self.generation:
+                raise Deferred("读取历史时连接发生变化，将从第一页重新读取。")
         # aiocqhttp normally unwraps data; support a full envelope in compatible transports too.
         if isinstance(result, dict) and "retcode" in result and "status" in result:
             if result["retcode"] != 0 or result["status"] != "ok":
@@ -63,12 +70,14 @@ class Adapter:
             result = result.get("data")
         return result
 
-    async def read(self, action, **params):
+    async def read(self, action, *, generation=None, **params):
         async with self.read_lock:
             await self.check_connection()
             pace = self.settings().pace
+            await self.ready_to_read()
             due = await self.store.call("get", "read-next:" + self.pid, 0)
             await self.sleep(max(0, due - self.clock()))
+            await self.ready_to_read()
             await self.store.call(
                 "reserve_budget", "read", self.account or self.pid, self.clock(), 3600, pace.reads_per_hour
             )
@@ -76,7 +85,7 @@ class Adapter:
                 "set", "read-next:" + self.pid, self.clock() + random.uniform(*pace.interval("read"))
             )
             try:
-                result = await self.transport(action, **params)
+                result = await self.transport(action, generation=generation, **params)
             except Deferred:
                 raise
             except Exception as exc:
@@ -90,9 +99,19 @@ class Adapter:
                     "ConnectionError",
                 }:
                     await self.cooldown(pace.failure_cooldown_seconds)
+                    await self.store.call(
+                        "extend",
+                        "read-cooldown:" + self.pid,
+                        self.clock() + pace.failure_cooldown_seconds,
+                    )
                     raise Deferred("QQ 接口暂时不可用，已进入冷却。", pace.failure_cooldown_seconds) from exc
                 raise DigestError(f"{action} 查询失败；请检查 NapCat 状态和群访问权限。") from exc
             return result
+
+    async def ready_to_read(self):
+        until = await self.store.call("get", "read-cooldown:" + self.pid, 0)
+        if until > self.clock():
+            raise Deferred("QQ 查询接口处于失败冷却期，稍后继续。", until - self.clock())
 
     async def identity(self):
         await self.check_connection()
@@ -117,7 +136,7 @@ class Adapter:
         except DigestError:
             return False
 
-    async def history_page(self, group, count, cursor=None):
+    async def history_page(self, group, count, cursor=None, *, generation=None):
         params = dict(
             group_id=group,
             count=count,
@@ -128,7 +147,7 @@ class Adapter:
         )
         if cursor is not None:
             params["message_seq"] = str(cursor)
-        data = await self.read("get_group_msg_history", **params)
+        data = await self.read("get_group_msg_history", generation=generation, **params)
         if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
             raise DigestError("历史接口没有返回有效的消息列表。")
         return data["messages"]
@@ -149,12 +168,7 @@ class Router:
                 if meta.name != "aiocqhttp" or not hasattr(getattr(platform, "bot", None), "call_action"):
                     continue
                 clients = getattr(platform.bot, "_wsr_api_clients", None)
-                if (
-                    task.bot_qq
-                    and isinstance(clients, dict)
-                    and clients
-                    and task.bot_qq not in map(str, clients)
-                ):
+                if task.bot_qq and isinstance(clients, dict) and task.bot_qq not in map(str, clients):
                     continue
                 pid = str(meta.id)
                 adapter = self.adapters.get(pid)

@@ -8,7 +8,7 @@ import time
 
 from .config import Deferred, DigestError, Task
 from .delivery import Delivery
-from .history import HistoryReader
+from .history import HISTORY_NOTES, HistoryReader
 from .models import Message
 from .render import make_payloads
 from .schedule import latest_boundary
@@ -26,6 +26,7 @@ class Service:
         self.commands = set()
         self.cron_ids = []
         self.loop_task = None
+        self.stop_task = None
         self.stopping = False
         self.last_cleanup = 0
         self.delivery = Delivery(store, router, guard, settings, journal, self.allowed, clock=clock)
@@ -77,26 +78,23 @@ class Service:
         self.wake.set()
 
     async def stop(self):
-        cleanup = asyncio.create_task(self._stop())
+        self.stopping = True
+        if self.stop_task is None:
+            self.stop_task = asyncio.create_task(self._stop())
+        cleanup = self.stop_task
         cancelled = False
-        while True:
+        while not cleanup.done():
             try:
                 await asyncio.shield(cleanup)
-                break
             except asyncio.CancelledError:
                 cancelled = True
+        cleanup.result()
         if cancelled:
             raise asyncio.CancelledError
 
     async def _stop(self):
         self.stopping = True
         self.wake.set()
-        for jid in self.cron_ids:
-            try:
-                await self.context.cron_manager.delete_job(jid)
-            except Exception as exc:
-                self.journal.record("定时任务清理失败", error_type=type(exc).__name__)
-        self.cron_ids.clear()
         tasks = [
             t
             for t in [self.loop_task, *self.workers.values(), *self.commands]
@@ -108,6 +106,12 @@ class Service:
             await asyncio.gather(*tasks, return_exceptions=True)
         self.workers.clear()
         self.loop_task = None
+        for jid in self.cron_ids:
+            try:
+                await asyncio.wait_for(self.context.cron_manager.delete_job(jid), timeout=5)
+            except (Exception, asyncio.CancelledError) as exc:
+                self.journal.record("定时任务清理失败", error_type=type(exc).__name__)
+        self.cron_ids.clear()
 
     async def ensure_window(self, task, *, manual=False):
         now = self.clock()
@@ -170,6 +174,12 @@ class Service:
                     if not await self.allowed(current.key):
                         break
                     try:
+                        if run["status"] in {"queued", "fetched"}:
+                            live = self.current(current.key)
+                            if live is None:
+                                break
+                            await self.store.call("reconfigure", run["id"], live.dump())
+                            run = await self.store.call("run", run["id"])
                         task = Task.restore(run["config"])
                         if (
                             run["status"] in {"queued", "fetched"}
@@ -189,7 +199,7 @@ class Service:
                             }:
                                 live = self.current(current.key)
                                 if live is not None and target not in live.targets:
-                                    await self.store.call("skip", run["id"], target)
+                                    await self.store.call("remove_target", run["id"], target)
                                     self.journal.record("目标已移除", run=run["id"], target=target)
                             await self.delivery.process(run)
                     except Deferred as exc:
@@ -219,7 +229,7 @@ class Service:
             messages, notes = await HistoryReader(limits, self.journal).read(
                 adapter, task, run["read_start"], run["end"]
             )
-            notes = list(dict.fromkeys(run["notes"] + notes))
+            notes = list(dict.fromkeys([n for n in run["notes"] if n not in HISTORY_NOTES] + notes))
             await self.store.call("fetched", run["id"], [m.dump() for m in messages], notes)
         else:
             messages, notes = [Message(**m) for m in run["snapshot"]], run["notes"]

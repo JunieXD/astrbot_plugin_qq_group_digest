@@ -22,6 +22,7 @@ class Guard:
 class API:
     account = "111111111"
     pid = "qq-test"
+    generation = 1
 
     def __init__(self):
         self.sent = []
@@ -51,7 +52,7 @@ class API:
             raise TimeoutError
         return {"message_id": 100 + len(self.sent)}
 
-    async def history_page(self, *args):
+    async def history_page(self, *args, **kwargs):
         return self.history
 
 
@@ -69,6 +70,7 @@ async def allowed(*args):
 
 async def build_delivery(store, task, settings, journal, api=None):
     api = api or API()
+    settings = replace(settings, tasks=(task,))
     rid = await make_run(store, task)
     digest = Digest([Item("通知", "申请将在明天截止。", ("m1",)), Item("资料", "已发布新资料。", ("m2",))])
     payloads = make_payloads(task, digest, NOW - 3600, NOW, api.account, settings.limits)
@@ -223,3 +225,41 @@ async def test_old_unsent_digest_expires_without_resolving_unknown(store, task, 
     rows = await store.call("deliveries", run["id"])
     assert [r["state"] for r in rows] == ["unknown", "skipped"]
     assert len(api.sent) == 1
+
+
+async def test_digest_expiring_while_in_queue_is_not_sent(store, task, settings, journal):
+    delivery, run, api = await build_delivery(store, task, settings, journal)
+
+    class SlowGuard(Guard):
+        async def run(self, **kwargs):
+            delivery.clock = lambda: NOW + 2 * 86400
+            return await super().run(**kwargs)
+
+    delivery.guard = SlowGuard()
+    await delivery.process(run)
+    assert not api.sent
+    assert (await store.call("deliveries", run["id"]))[0]["state"] == "skipped"
+
+
+async def test_digest_expiring_during_preflight_is_not_sent(store, task, settings, journal):
+    delivery, run, api = await build_delivery(store, task, settings, journal)
+    original_read = api.read
+
+    async def slow_read(action, **params):
+        if action == "get_group_member_info":
+            delivery.clock = lambda: NOW + 2 * 86400
+        return await original_read(action, **params)
+
+    api.read = slow_read
+    await delivery.process(run)
+    assert not api.sent
+    assert (await store.call("deliveries", run["id"]))[0]["state"] == "skipped"
+
+
+async def test_latest_fallback_setting_applies_to_unsubmitted_card(store, task, settings, journal):
+    task = replace(task, mode="合并转发·整篇")
+    delivery, run, api = await build_delivery(store, task, settings, journal)
+    api.packet = False
+    delivery.settings = lambda: replace(settings, tasks=(replace(task, fallback_to_plain=True),))
+    await delivery.process(run)
+    assert [a for a, _ in api.sent] == ["send_group_msg"]

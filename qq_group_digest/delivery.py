@@ -39,7 +39,8 @@ class Delivery:
             try:
                 await adapter.ready_to_send()
                 if first["mode"].startswith("合并转发") and not await adapter.packet_ready():
-                    if not task.fallback_to_plain:
+                    live = next((t for t in self.settings().tasks if t.key == task.key), task)
+                    if not live.fallback_to_plain:
                         raise DigestError("合并转发能力暂不可用，已暂缓；可配置改发普通整篇。")
                     payload = make_payloads(
                         task,
@@ -87,6 +88,9 @@ class Delivery:
         async def action():
             nonlocal submitted
             try:
+                if self.clock() - run["end"] > task.catchup_hours * 3600:
+                    await self.store.call("expire_pending", run["id"])
+                    raise Deferred("摘要已超过补报时长，停止投递。")
                 if not await self.allowed(task.key, row["target"]):
                     raise Deferred("任务已暂停或目标群已移除。")
                 fresh = await self.router.resolve(task)
@@ -113,6 +117,9 @@ class Delivery:
                     raise Deferred("机器人在目标群中仍被禁言。", 600)
                 if not await self.allowed(task.key, row["target"]):
                     raise Deferred("任务已暂停或目标群已移除。")
+                if self.clock() - run["end"] > task.catchup_hours * 3600:
+                    await self.store.call("expire_pending", run["id"])
+                    raise Deferred("摘要已超过补报时长，停止投递。")
                 submitted = await self.store.call(
                     "submit", row["id"], adapter.account, self.clock(), self.settings().pace.sends_per_day
                 )
@@ -184,9 +191,10 @@ class Delivery:
         for target in dict.fromkeys(r["target"] for r in rows if r["state"] == "unknown"):
             unknown = [r for r in rows if r["target"] == target and r["state"] == "unknown"]
             raw_messages = []
-            cursor, anchors = None, set()
+            cursor, anchors, generation = None, set(), None
             for _ in range(3):
-                page = await adapter.history_page(target, 20, cursor)
+                page = await adapter.history_page(target, 20, cursor, generation=generation)
+                generation = adapter.generation
                 if not page:
                     break
                 raw_messages.extend(page)
