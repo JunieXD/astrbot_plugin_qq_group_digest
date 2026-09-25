@@ -43,6 +43,39 @@ def test_truncated_valid_json_is_still_rejected():
         usable_completion(response)
 
 
+def test_structured_topic_normalizes_without_losing_qualifiers_or_sources(task):
+    raw = {
+        "subject": "甲校软件学院",
+        "title": "群友反馈候补已有递补电话",
+        "body": ["群友{{u1}}反馈，其候补第96名，已接到电话。", "群友{{u2}}听说仍可能递补。"],
+        "sources": ["u1", "u2"],
+    }
+    items = parse_digest(json.dumps({"items": [raw]}), {"u1", "u2"}, task)
+    assert items[0].title == "甲校软件学院｜群友反馈候补已有递补电话"
+    assert items[0].body == "\n".join(raw["body"])
+    assert items[0].sources == ("u1", "u2")
+    assert parse_digest(json.dumps({"items": [i.dump() for i in items]}), {"u1", "u2"}, task) == items
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"subject": ""},
+        {"subject": ["甲校"]},
+        {"title": ""},
+        {"body": []},
+        {"body": ["有效", " "]},
+        {"body": ["有效", {}]},
+        {"body": ["有效"] * 9},
+        {"body": ["群友{{u999}}反馈有名额。"]},
+    ],
+)
+def test_malformed_structured_topics_rejected(task, changes):
+    raw = {"subject": "甲校", "title": "反馈", "body": ["有候补消息。"], "sources": ["u1"], **changes}
+    with pytest.raises(DigestError):
+        parse_digest(json.dumps({"items": [raw]}), {"u1"}, task)
+
+
 def test_input_receipt_required_even_for_empty_summary(task):
     with pytest.raises(DigestError):
         parse_digest('{"items":[]}', {"m000001"}, task, batch_id="expected")
@@ -168,7 +201,7 @@ async def test_speaker_provenance_survives_chunking_and_reduction(task, attribut
         Message("d", "4", NOW - 1, "444444444", "还有其他情况。"),
     ]
     client = Client()
-    result = await Summarizer(client, replace(Limits(), llm_input_chars=4000)).summarize(
+    result = await Summarizer(client, replace(Limits(), llm_input_chars=6000)).summarize(
         replace(task, attribute_speakers=attribute_speakers), None, messages, NOW - 10, NOW
     )
     assert result.items and client.reductions >= 1

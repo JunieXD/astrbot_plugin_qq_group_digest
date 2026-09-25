@@ -13,7 +13,7 @@ def plain(text):
 
 
 def header(task, start, end):
-    return f"📰 {task.label} · 群聊摘要\n\n{period_text(task, start, end)}"
+    return f"✨ {task.label} · 群聊摘要\n\n{period_text(task, start, end)}"
 
 
 def display_text(text):
@@ -127,10 +127,10 @@ def make_payloads(task, digest, start, end, account, limits, mode=None):
                 {"type": "node", "data": {"user_id": account, "nickname": "群聊摘要", "content": [plain(t)]}}
                 for t in texts
             ],
-            "source": f"📰 {task.label} · 群聊摘要",
+            "source": f"✨ {task.label} · 群聊摘要",
             "news": [{"text": period_text(task, start, end)}],
             "summary": f"共 {len(digest.items)} 条 · 点开查看",
-            "prompt": "[📰 群聊摘要]",
+            "prompt": "[✨ 群聊摘要]",
         }
     ]
 

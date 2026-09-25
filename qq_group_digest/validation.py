@@ -34,11 +34,26 @@ def parse_digest(text, known, task, batch_id=None, *, enforce_budget=True):
         raise OutputError("receipt", "本次输入校验标识不匹配。")
     items = []
     for index, raw in enumerate(data["items"], 1):
-        if not isinstance(raw, dict) or set(raw) != {"title", "body", "sources"}:
-            raise OutputError("item_structure", f"第 {index} 条应只有 title、body、sources。")
-        if not isinstance(raw["title"], str) or not isinstance(raw["body"], str):
-            raise OutputError("text_type", f"第 {index} 条标题和正文必须为文字。")
-        title, body = clean_text(raw["title"]), clean_text(raw["body"])
+        fields = {"title", "body", "sources"}
+        if not isinstance(raw, dict) or set(raw) not in (fields, fields | {"subject"}):
+            raise OutputError("item_structure", f"第 {index} 条应为 subject、title、body、sources。")
+        if not isinstance(raw["title"], str):
+            raise OutputError("text_type", f"第 {index} 条标题必须为文字。")
+        title = clean_text(raw["title"])
+        if not title:
+            raise OutputError("empty_item", f"第 {index} 条标题为空。")
+        if "subject" in raw:
+            if not isinstance(raw["subject"], str) or not clean_text(raw["subject"]):
+                raise OutputError("subject", f"第 {index} 条 subject 必须是非空的具体对象。")
+            title = clean_text(raw["subject"]) + "｜" + title
+        # Normalize structured paragraphs at the boundary; saved digests and
+        # cached candidates keep the same Item shape used by all renderers.
+        paragraphs = raw["body"] if isinstance(raw["body"], list) else [raw["body"]]
+        if not 1 <= len(paragraphs) <= 8 or any(
+            not isinstance(p, str) or not clean_text(p) for p in paragraphs
+        ):
+            raise OutputError("text_type", f"第 {index} 条正文应为 1～8 个非空文字要点。")
+        body = "\n".join(clean_text(p) for p in paragraphs)
         sources = raw["sources"]
         if not title or not body:
             raise OutputError("empty_item", f"第 {index} 条标题或正文为空。")

@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -63,7 +64,7 @@ async def test_initial_wait_then_fixed_boundary_and_overlap(store, task, setting
     run = await store.call("run", rid)
     assert run["end"] == initial + 43200
     assert run["start"] == run["end"] - 86400
-    assert run["read_start"] == run["start"]
+    assert run["read_start"] == run["start"] - 600
     await store.call("generated", rid, {"items": [], "notes": []}, [])
     service.clock = lambda: initial + 86400 + 180
     rid2 = await service.ensure_window(task)
@@ -111,11 +112,31 @@ async def test_generated_digest_survives_retry_without_recalling_model(store, ta
     assert len(api.sent) == 1
 
 
-async def test_preview_does_not_advance_cursor_or_create_deliveries(store, task, settings, journal):
+@pytest.mark.parametrize("overlap", [0, 10])
+async def test_preview_does_not_advance_cursor_or_create_deliveries(store, task, settings, journal, overlap):
+    task = replace(task, overlap_minutes=overlap)
     service, api = make_service(store, settings, journal)
-    api.history = [raw_message(10, NOW - 1), raw_message(1, NOW - 86401)]
-    digest, _, _ = await service.preview(task)
+    start = NOW - 86400
+    api.history = [
+        raw_message(10, start + 1, "候补到我了"),
+        raw_message(5, start - 60, "讨论的是甲校软件学院"),
+        raw_message(1, start - 601, "更早的无关信息"),
+    ]
+    captured = []
+
+    class CaptureClient:
+        async def generate(self, task, adapter, prompt, **kwargs):
+            data, _ = json.JSONDecoder().raw_decode(prompt.split("聊天记录：\n", 1)[1])
+            captured.append(data)
+            return output(sources=[data["messages"][-1][0]])
+
+    service.client = CaptureClient()
+    digest, actual_start, end = await service.preview(task)
     assert digest.items
+    assert (actual_start, end) == (start, NOW)
+    rows = captured[0]["messages"]
+    assert [row[3] for row in rows] == (["讨论的是甲校软件学院", "候补到我了"] if overlap else ["候补到我了"])
+    assert captured[0]["period_start"] == (60 if overlap else 0)
     assert await store.call("get", "cursor:" + task.key) is None
     assert await store.call("latest", task.key) == []
     assert not api.sent

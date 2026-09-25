@@ -11,7 +11,7 @@ from .config import DigestError
 from .llm_client import LLMClient as LLMClient
 from .llm_client import usable_completion as usable_completion
 from .models import Digest
-from .prompts import SYSTEM
+from .prompts import EDITORIAL, SYSTEM
 from .schedule import period_text
 from .transcript import InputBudget, Transcript, encode, source_id
 from .validation import OutputError, parse_digest
@@ -43,14 +43,14 @@ class Summarizer:
             f"最多 {task.max_topics} 个主题；通常每条标题和正文合计约 {max(30, int(per_item * 0.75))} 字。"
             f"全部标题正文目标不超过 {int(task.summary_chars * 0.8)} 字，硬上限 {task.summary_chars} 字。\n"
             "优先保留有用且具体的信息、署名、反例、适用范围和不确定性。"
-            "每条只讲一个具体院校/学院、事件或申请决策，不以多校动态为题拼接多所学校。"
+            "每条只讲一个明确对象或事件，标题写具体对象和关键进展。"
             "同一对象的补充和反驳可合并；压缩措辞但保持完整句子，不能用省略号截断信息。"
             "sources 列本条内容所依据的 u 发言者代号；每条聚焦具体事件，不要穷举整段讨论。\n"
             f"上期内容供去重：{prior}\n保留新增信息，忽略没有进展的重复内容。\n"
         )
         if task.attribute_speakers:
             instructions += (
-                "引用群友说法时用群友{{u代号}}署名，例如群友{{u3}}说、群友{{u5}}反驳。"
+                "概述群友说法时用群友{{u代号}}署名，正文用第三人称提炼有用信息，不逐句摘抄。"
                 "程序会从原消息填入真实昵称；不自行生成昵称，不把内部消息编号作为正文中的数字注释。\n"
             )
         else:
@@ -58,9 +58,10 @@ class Summarizer:
         footer = (
             "\n输入结束。完整扫描整个时间窗口，按关注内容选择独立的有用信息，保留署名、分歧及限定；不要只总结开头或结尾。输出 items JSON，全文目标 "
             + str(int(task.summary_chars * 0.8))
-            + " 字。每条聚焦一个具体院校/学院或事件，标题简短，正文按要点分为短段落，用换行分隔。"
-            + "不附加未经核实等免责声明或技术说明。"
-            + "正文署名用群友{{u代号}}，sources 同样只列 u 发言者代号。不要把 m 消息编号当成发言者。"
+            + " 字。\n"
+            + EDITORIAL
+            + ("正文署名用群友{{u代号}}。" if task.attribute_speakers else "正文不署名。")
+            + "sources 只列 u 发言者代号。不要把 m 消息编号当成发言者。"
         )
         merge_marker = "候选摘要（sources 和 source_speakers 保留原始归属）："
         if hasattr(self.client, "budget"):
@@ -148,7 +149,7 @@ class Summarizer:
                             if task.attribute_speakers:
                                 data["source_speakers"] = {s: transcript.speakers[s] for s in item.sources}
                             reduced.append(data)
-                        repaired = instructions + correction + "\n待修正摘要：\n" + encode(reduced)
+                        repaired = instructions + correction + "\n待修正摘要：\n" + encode(reduced) + footer
                     else:
                         repaired = prompt + correction
                     if not budget.fits(SYSTEM + repaired):

@@ -131,14 +131,13 @@ class Service:
         notes = []
         if cursor["first"]:
             start = end - task.initial_hours * 3600
-            read_start = start
         else:
             oldest = await self.store.call("oldest_queued_start", task.key)
             requested = min(cursor["end"], oldest) if oldest is not None else cursor["end"]
             start = max(requested, end - task.catchup_hours * 3600)
             if start > requested:
                 notes.append(f"本期为恢复后的补报，仅覆盖最近 {task.catchup_hours} 小时。")
-            read_start = start - task.overlap_minutes * 60
+        read_start = start - task.overlap_minutes * 60
         rid = await self.store.call("create_run", task.key, start, end, read_start, task.dump(), notes, now)
         self.journal.record(
             "摘要批次创建", run=rid, group=task.source_group, start=start, end=end, read_start=read_start
@@ -284,7 +283,12 @@ class Service:
                     )
                 adapter = await self.router.resolve(task)
                 messages, notes = await self.history_reader().read(
-                    adapter, task, start, end, progress=reading, refresh=refresh
+                    adapter,
+                    task,
+                    start - task.overlap_minutes * 60,
+                    end,
+                    progress=reading,
+                    refresh=refresh,
                 )
                 progress["phase"] = "模型生成中"
                 digest = await Summarizer(

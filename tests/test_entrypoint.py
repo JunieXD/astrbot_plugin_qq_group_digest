@@ -115,7 +115,10 @@ async def test_preview_ack_progress_and_result_survive_stopped_event(
     service, api = make_service(store, settings, journal)
     entrypoint.service = service
     event = PrivateEvent("/群摘要 预览 " + task.source_group)
-    api.history = [raw_message(10, NOW - 1), raw_message(1, NOW - 86401)]
+    api.history = [
+        raw_message(10, NOW - 1),
+        raw_message(1, NOW - task.initial_hours * 3600 - task.overlap_minutes * 60 - 1),
+    ]
 
     class Client:
         async def generate(self, task, adapter, prompt, **kwargs):
@@ -170,7 +173,10 @@ async def test_authenticated_web_preview_uses_real_service_without_sending(
     assert (await entrypoint.api_preview())["status"] == "error"
     service, api = make_service(store, settings, journal)
     entrypoint.service = service
-    api.history = [raw_message(10, NOW - 1), raw_message(1, NOW - 86401)]
+    api.history = [
+        raw_message(10, NOW - 1),
+        raw_message(1, NOW - task.initial_hours * 3600 - task.overlap_minutes * 60 - 1),
+    ]
 
     async def generate(*args, **kwargs):
         return output()
