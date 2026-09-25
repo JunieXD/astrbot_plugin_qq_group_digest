@@ -238,14 +238,17 @@ async def test_retry_uses_new_prompt_and_mode_without_moving_window(store, task,
     assert [a for a, _ in api.sent] == ["send_group_forward_msg"]
 
 
-async def test_changed_history_options_reread_snapshot_and_refresh_notes(store, task, settings, journal):
+@pytest.mark.parametrize("option", ["read_forwards", "attribute_speakers"])
+async def test_changed_history_options_reread_snapshot_and_refresh_notes(
+    store, task, settings, journal, option
+):
     from qq_group_digest.history import SKIPPED_FORWARD_NOTE
 
     service, api = make_service(store, settings, journal)
     rid = await service.ensure_window(task, manual=True)
     run = await store.call("run", rid)
     await store.call("fetched", rid, [], [SKIPPED_FORWARD_NOTE])
-    changed = replace(task, read_forwards=True)
+    changed = replace(task, **{option: True})
     service.settings = lambda: replace(settings, tasks=(changed,))
     api.history = [raw_message(10, run["end"] - 1), raw_message(1, run["read_start"] - 1)]
     await service.step(changed)

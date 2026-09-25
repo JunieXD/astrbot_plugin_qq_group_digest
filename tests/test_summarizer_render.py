@@ -131,6 +131,53 @@ async def test_large_single_message_is_not_silently_dropped(task):
     assert len(client.prompts) > 1
 
 
+@pytest.mark.parametrize("attribute_speakers", [False, True])
+async def test_speaker_provenance_survives_chunking_and_reduction(task, attribute_speakers):
+    class Client:
+        extracted = {}
+        reductions = 0
+
+        async def generate(self, task, adapter, prompt, **kwargs):
+            merge = "\n请整合下面的候选摘要，合并同主题并保留 sources：\n" in prompt
+            marker = "\n请整合下面的候选摘要，合并同主题并保留 sources：\n" if merge else "\n聊天记录：\n"
+            data = json.loads(prompt.split(marker)[1].split("\n本次校验标识：")[0])
+            assert "222222222" not in prompt and "333333333" not in prompt
+            if merge:
+                self.reductions += 1
+                for item in data:
+                    if attribute_speakers:
+                        assert item["source_speakers"] == {s: self.extracted[s] for s in item["sources"]}
+                    else:
+                        assert "source_speakers" not in item
+                sources = list(dict.fromkeys(s for item in data for s in item["sources"]))
+            else:
+                for record in data:
+                    assert ("speaker" in record) == attribute_speakers
+                    if attribute_speakers:
+                        self.extracted[record["id"]] = record["speaker"]
+                sources = list(dict.fromkeys(r["id"] for r in data))
+            return output(sources=sources, prompt=prompt, body="群友说法存在分歧，未经核实。")
+
+    messages = [
+        Message("a", "1", NOW - 4, "222222222", "甲校卡 rk1。" * 600, sender_name="同名昵称"),
+        Message("b", "2", NOW - 3, "333333333", "不一定。", sender_name="同名昵称"),
+        Message("c", "3", NOW - 2, "222222222", "只是听说。", sender_name="新名片"),
+        Message("d", "4", NOW - 1, "444444444", "还有其他情况。"),
+    ]
+    client = Client()
+    result = await Summarizer(client, replace(Limits(), llm_input_chars=4000)).summarize(
+        replace(task, attribute_speakers=attribute_speakers), None, messages, NOW - 10, NOW
+    )
+    assert result.items and client.reductions >= 1
+    if attribute_speakers:
+        speakers = client.extracted
+        assert speakers["m000001"]["id"] != speakers["m000002"]["id"]
+        assert speakers["m000001"]["id"] == speakers["m000003"]["id"]
+        assert speakers["m000001"]["name"] == "同名昵称"
+        assert speakers["m000003"]["name"] == "新名片"
+        assert speakers["m000004"]["name"] == ""
+
+
 async def test_empty_window_never_calls_model(task):
     class Client:
         async def generate(self, *args, **kwargs):

@@ -37,6 +37,7 @@ def test_schema_defaults_and_example_match_runtime():
         {"advanced": {"timezone": "Invalid/Zone"}},
         {"advanced": {"summary_chars": True}},
         {"advanced": {"overlap_minutes": -1}},
+        {"advanced": {"attribute_speakers": "true"}},
     ],
 )
 def test_invalid_task_rejected(patch):

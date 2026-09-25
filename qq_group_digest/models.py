@@ -10,6 +10,7 @@ class Message:
     text: str
     seq: int = 0
     forward_ids: list[str] = field(default_factory=list)
+    sender_name: str = ""
 
     def dump(self):
         return asdict(self)

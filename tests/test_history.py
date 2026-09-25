@@ -4,6 +4,7 @@ import pytest
 
 from qq_group_digest.config import IncompleteHistory, Limits
 from qq_group_digest.history import HistoryReader, flatten, normalize
+from qq_group_digest.models import Message
 
 from .conftest import NOW, raw_message
 
@@ -60,6 +61,27 @@ def test_milliseconds_and_cq_format():
     assert "12345" not in parsed.text
 
 
+@pytest.mark.parametrize(
+    "sender,expected",
+    [
+        ({"card": "23级-某校-小林", "nickname": "旧昵称"}, "23级-某校-小林"),
+        ({"card": "  ", "nickname": " 小林\n同学\x00 "}, "小林 同学"),
+        ({"nickname": "QQ123456789"}, "QQ[号码]"),
+        ({"user_id": "222222222"}, ""),
+        (None, ""),
+    ],
+)
+def test_history_names_are_optional_and_do_not_fall_back_to_qq(sender, expected):
+    raw = {**raw_message(1, NOW), "sender": sender}
+    assert normalize(raw, "123456789").sender_name == ""
+    named = normalize(raw, "123456789", include_names=True)
+    assert named.sender_name == expected
+    assert Message(**named.dump()) == named
+    old_snapshot = named.dump()
+    old_snapshot.pop("sender_name")
+    assert Message(**old_snapshot).sender_name == ""
+
+
 @pytest.mark.parametrize("patch", [{"time": None}, {"time": 0}, {"group_id": "777777777"}])
 def test_invalid_history_is_rejected(patch):
     with pytest.raises(IncompleteHistory):
@@ -90,6 +112,36 @@ async def test_forward_uses_outer_time_and_one_level(task, journal):
     )
     assert result[0].time == NOW - 10
     assert "旧通知的新进展" in result[0].text
+
+
+@pytest.mark.parametrize("include_names", [False, True])
+async def test_forward_authors_stay_separate_from_the_group_forwarder(task, journal, include_names):
+    class ForwardAPI(HistoryAPI):
+        async def read(self, action, **kwargs):
+            return {
+                "messages": [
+                    {
+                        "sender": {"nickname": "内层作者", "user_id": "333333333"},
+                        "content": [{"type": "text", "data": {"text": "听说甲校卡 rk1"}}],
+                    },
+                    {"content": [{"type": "text", "data": {"text": "另一条未署名说法"}}]},
+                ]
+            }
+
+    raw = {**raw_message(10, NOW - 10), "sender": {"card": "外层转发者"}}
+    raw["message"].append({"type": "forward", "data": {"id": "forward-id"}})
+    result, _ = await HistoryReader(Limits(), journal).read(
+        ForwardAPI([[raw, raw_message(1, NOW - 1000)]]),
+        replace(task, read_forwards=True, attribute_speakers=include_names),
+        NOW - 100,
+        NOW,
+    )
+    message = result[0]
+    assert message.sender_name == ("外层转发者" if include_names else "")
+    assert ("内层作者" in message.text) == include_names
+    assert "333333333" not in message.text
+    assert "不能归为外层转发者本人说法" in message.text
+    assert "另一条未署名说法" in message.text
 
 
 def test_card_parser_does_not_expose_entire_json():

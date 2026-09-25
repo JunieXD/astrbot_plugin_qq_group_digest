@@ -18,7 +18,7 @@ from .qq_group_digest.store import Store
 from .qq_group_digest.summarizer import LLMClient
 
 
-@register("astrbot_plugin_qq_group_digest", "JunieXD", "定时提炼 QQ 群聊并可靠投递摘要", "0.1.1")
+@register("astrbot_plugin_qq_group_digest", "JunieXD", "定时提炼 QQ 群聊并可靠投递摘要", "0.1.2")
 class QQGroupDigest(Star):
     def __init__(self, context: Context, config=None):
         super().__init__(context=context, config=config)
@@ -46,7 +46,7 @@ class QQGroupDigest(Star):
             )
             await self.service.start()
             self.start_error = ""
-            logger.info("QQ 群聊摘要 v0.1.1 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。")
+            logger.info("QQ 群聊摘要 v0.1.2 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。")
         except BaseException as exc:
             if self.journal:
                 self.journal.record("初始化失败", error_type=type(exc).__name__)

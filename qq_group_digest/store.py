@@ -211,7 +211,10 @@ class Store:
         row = self.run(rid)
         if row["status"] not in {"queued", "fetched"} or encode(row["config"]) == encode(config):
             return
-        reread = any(row["config"].get(k) != config.get(k) for k in ("read_forwards", "forward_limit"))
+        reread = any(
+            row["config"].get(k, False) != config.get(k, False)
+            for k in ("read_forwards", "forward_limit", "attribute_speakers")
+        )
         with self.db:
             self.db.execute("UPDATE runs SET config=? WHERE id=?", (encode(config), rid))
             if reread:

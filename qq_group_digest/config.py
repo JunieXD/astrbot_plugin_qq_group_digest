@@ -81,6 +81,7 @@ class Task:
     fallback_to_plain: bool = False
     max_topics: int = 8
     summary_chars: int = 1200
+    attribute_speakers: bool = False
 
     @property
     def key(self):
@@ -207,7 +208,7 @@ def parse_settings(raw):
         }
         for key, default in [("enabled", True), ("include_source", True)]:
             kw[key] = flag(d.get(key, default), key)
-        for key in ["read_forwards", "fallback_to_plain"]:
+        for key in ["read_forwards", "fallback_to_plain", "attribute_speakers"]:
             kw[key] = flag(more.get(key, False), key)
         for key, low, high in [
             ("overlap_minutes", 0, 360),

@@ -123,6 +123,12 @@
                 "default": 5,
                 "hint": "1～20。超出部分会在摘要说明中标记。"
               },
+              "attribute_speakers": {
+                "description": "引用群友说法时保留昵称",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后可写“群友某某反馈……（未经核实）”。优先使用历史消息中的群名片，其次昵称，不输出 QQ 号；跨群摘要也会保留署名。转发署名不代表已核实身份。"
+              },
               "fallback_to_plain": {
                 "description": "合并转发不可用时改发普通整篇",
                 "type": "bool",

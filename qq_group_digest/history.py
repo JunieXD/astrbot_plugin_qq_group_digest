@@ -30,6 +30,18 @@ def clean_text(value):
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", str(value or "")).strip()
 
 
+def display_name(sender):
+    """Keep a bounded display label, never fall back to a QQ number."""
+    if not isinstance(sender, dict):
+        return ""
+    for key in ("card", "nickname"):
+        raw = sender.get(key)
+        if isinstance(raw, str) and (name := clean_text(raw)):
+            name = re.sub(r"\s+", " ", name)
+            return re.sub(r"\d{5,}", "[号码]", name)[:80]
+    return ""
+
+
 def flatten(value):
     parts, forwards = [], []
     for seg in segments(value):
@@ -75,7 +87,7 @@ def flatten(value):
     return " ".join(p for p in parts if p), list(dict.fromkeys(forwards))
 
 
-def normalize(raw, group):
+def normalize(raw, group, *, include_names=False):
     if not isinstance(raw, dict):
         raise IncompleteHistory("历史中出现无法识别的消息。")
     if str(raw.get("group_id", group)) != str(group):
@@ -88,7 +100,9 @@ def normalize(raw, group):
             raise ValueError
         mid = str(raw["message_id"])
         seq = int(raw.get("real_seq") or 0)
-        sender = str(raw.get("user_id") or raw.get("sender", {}).get("user_id") or "")
+        sender_data = raw.get("sender")
+        sender_data = sender_data if isinstance(sender_data, dict) else {}
+        sender = str(raw.get("user_id") or sender_data.get("user_id") or "")
         if not mid.lstrip("-").isdigit() or not sender.isdigit():
             raise ValueError
         text, forwards = flatten(raw.get("message", raw.get("raw_message", "")))
@@ -99,7 +113,8 @@ def normalize(raw, group):
         if seq
         else hashlib.sha256(f"{group}:{mid}:{stamp}:{sender}:{text}".encode()).hexdigest()
     )
-    return Message(key, mid, stamp, sender, text, seq, forwards)
+    name = display_name(sender_data) if include_names else ""
+    return Message(key, mid, stamp, sender, text, seq, forwards, name)
 
 
 class HistoryReader:
@@ -120,7 +135,7 @@ class HistoryReader:
                 # NapCat can filter unparseable native messages into an empty array.
                 # That does not establish that the requested boundary was reached.
                 raise IncompleteHistory("历史接口返回空页，无法确认时间范围已经覆盖；可缩短回溯时间后重试。")
-            messages = [normalize(m, task.source_group) for m in page]
+            messages = [normalize(m, task.source_group, include_names=task.attribute_speakers) for m in page]
             ordered = sorted(messages, key=lambda m: (m.time, m.seq, m.message_id))
             oldest = ordered[0]
             for message in ordered:
@@ -166,8 +181,14 @@ class HistoryReader:
                             value = node.get("message", node.get("content", []))
                             text, _ = flatten(value)
                             if text:
-                                texts.append(text)
-                        message.text += "\n[转发内容，发布时间以外层消息为准]\n" + "\n".join(texts)
+                                entry = {"text": text}
+                                if task.attribute_speakers:
+                                    entry["display_name"] = display_name(node.get("sender"))
+                                texts.append(json.dumps(entry, ensure_ascii=False))
+                        message.text += (
+                            "\n[转发内容，发布时间以外层消息为准；以下是独立转发节点，"
+                            "不能归为外层转发者本人说法；节点显示名可自定义，身份未核实]\n" + "\n".join(texts)
+                        )
                         if len(nodes) > 100:
                             failed += 1
                     except Exception as exc:
