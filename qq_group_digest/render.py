@@ -83,7 +83,7 @@ def contents(task, digest):
     # Use the final selected titles, not another model-generated summary:
     # numbering, qualifiers and ordering must agree with the following nodes.
     title = task.content_title or default_title(task)
-    entries = "\n".join(item_heading(i, item) for i, item in enumerate(digest.items))
+    entries = "\n\n".join(item_heading(i, item) for i, item in enumerate(digest.items))
     return f"{title}\n\n目录\n{entries}"
 
 
