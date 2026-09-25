@@ -13,7 +13,7 @@ from .llm_usage import extract_usage
 from .llm_usage import field as value
 from .model_options import CONTEXTS, effective_options, request_provider
 from .prompts import SYSTEM
-from .transcript import InputBudget
+from .transcript import InputBudget, encode
 
 
 def usable_completion(response):
@@ -66,13 +66,19 @@ class LLMClient:
         return str(pid), model, provider
 
     async def budget(self, task, adapter):
-        _, model, _ = await self.describe(task, adapter)
-        limits = self.settings().limits
+        _, model, provider = await self.describe(task, adapter)
+        settings = self.settings()
+        limits = settings.limits
         known = CONTEXTS.get(model.lower())
         context = limits.llm_context_tokens or known or 32000
         if known:
             context = min(context, known)
-        return InputBudget(context - limits.llm_output_tokens - 2048, limits.llm_input_chars)
+        config = getattr(provider, "provider_config", {})
+        options = effective_options(
+            model, config if isinstance(config, dict) else {}, limits, settings.llm_generation
+        )
+        format_bytes = len(encode(options.get("response_format", {})).encode("utf-8"))
+        return InputBudget(context - limits.llm_output_tokens - 2048 - format_bytes, limits.llm_input_chars)
 
     async def cached(self, task, adapter, prompt):
         settings = self.settings()

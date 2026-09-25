@@ -11,7 +11,7 @@ from .config import DigestError
 from .llm_client import LLMClient as LLMClient
 from .llm_client import usable_completion as usable_completion
 from .models import Digest
-from .prompts import EDITORIAL, SYSTEM
+from .prompts import SYSTEM
 from .schedule import period_text
 from .transcript import InputBudget, Transcript, encode, source_id
 from .validation import OutputError, parse_digest
@@ -42,26 +42,21 @@ class Summarizer:
             f"关注内容：{task.focus}\n本期：{period_text(task, start, end)}（{task.timezone}）。\n"
             f"最多 {task.max_topics} 个主题；通常每条标题和正文合计约 {max(30, int(per_item * 0.75))} 字。"
             f"全部标题正文目标不超过 {int(task.summary_chars * 0.8)} 字，硬上限 {task.summary_chars} 字。\n"
-            "优先保留有用且具体的信息、署名、反例、适用范围和不确定性。"
-            "每条只讲一个明确对象或事件，标题写具体对象和关键进展。"
-            "同一对象的补充和反驳可合并；压缩措辞但保持完整句子，不能用省略号截断信息。"
-            "sources 列本条内容所依据的 u 发言者代号；每条聚焦具体事件，不要穷举整段讨论。\n"
-            f"上期内容供去重：{prior}\n保留新增信息，忽略没有进展的重复内容。\n"
         )
+        if prior != "[]":
+            instructions += f"上期内容供去重：{prior}\n仅收录新增信息或进展。\n"
         if task.attribute_speakers:
-            instructions += (
-                "概述群友说法时用群友{{u代号}}署名，正文用第三人称提炼有用信息，不逐句摘抄。"
-                "程序会从原消息填入真实昵称；不自行生成昵称，不把内部消息编号作为正文中的数字注释。\n"
-            )
+            instructions += "署名开启：群友说法使用群友{{u代号}}，程序填入真实昵称。\n"
         else:
             instructions += "无需引用昵称或成员代号，直接写群友反馈、转发信息等；不要输出署名占位符。\n"
         footer = (
-            "\n输入结束。完整扫描整个时间窗口，按关注内容选择独立的有用信息，保留署名、分歧及限定；不要只总结开头或结尾。输出 items JSON，全文目标 "
+            "\n输入结束。扫描整个时间窗口，按价值排序，只收录本期新增信息。每条明确具体学校/事项和进展；"
+            "结合明确回复与同一人的上下文概述，不逐句摘抄，不猜对象，不混淆学校或经历。"
+            "保留分歧、限定及原始链接，不附免责声明。输出 items JSON，标题正文目标 "
             + str(int(task.summary_chars * 0.8))
-            + " 字。\n"
-            + EDITORIAL
+            + " 字。"
             + ("正文署名用群友{{u代号}}。" if task.attribute_speakers else "正文不署名。")
-            + "sources 只列 u 发言者代号。不要把 m 消息编号当成发言者。"
+            + "sources 只列 u 发言者代号，不能填数字消息编号。"
         )
         merge_marker = "候选摘要（sources 和 source_speakers 保留原始归属）："
         if hasattr(self.client, "budget"):
@@ -79,6 +74,16 @@ class Summarizer:
         chunks = transcript.chunks(room, self.limits.llm_overlap_messages)
         calls, job_id = 0, self.run_id or "preview:" + uuid.uuid4().hex
         self.progress(phase="模型生成中", chunks=len(chunks), chunk=0, calls=0)
+
+        def candidate(item):
+            data = item.dump()
+            # Current results already cite u labels. Only legacy/message citations
+            # need a lookup; repeating u1 -> u1 adds no attribution information.
+            if task.attribute_speakers:
+                aliases = {s: transcript.speakers[s] for s in item.sources if s != transcript.speakers[s]}
+                if aliases:
+                    data["source_speakers"] = aliases
+            return data
 
         async def extract(content, allowed, phase, index=1, total=1):
             nonlocal calls
@@ -142,13 +147,7 @@ class Summarizer:
                         f"总长度目标 {int(task.summary_chars * 0.75)} 字，不能超过 {task.summary_chars} 字。"
                     )
                     if exc.items is not None:
-                        reduced = []
-                        for item in exc.items:
-                            data = item.dump()
-                            data["sources"] = list(item.sources)
-                            if task.attribute_speakers:
-                                data["source_speakers"] = {s: transcript.speakers[s] for s in item.sources}
-                            reduced.append(data)
+                        reduced = [candidate(item) for item in exc.items]
                         repaired = instructions + correction + "\n待修正摘要：\n" + encode(reduced) + footer
                     else:
                         repaired = prompt + correction
@@ -178,10 +177,7 @@ class Summarizer:
             for _ in range(8):
                 batches, current = [], []
                 for item in candidates:
-                    data = item.dump()
-                    data["sources"] = list(item.sources)
-                    if task.attribute_speakers:
-                        data["source_speakers"] = {s: transcript.speakers[s] for s in item.sources}
+                    data = candidate(item)
                     if current and not room.fits(encode([*current, data])):
                         batches.append(current)
                         current = []
@@ -193,6 +189,7 @@ class Summarizer:
                 candidates = []
                 for index, batch in enumerate(batches, 1):
                     allowed = {source_id(s) for item in batch for s in item["sources"]}
+                    allowed.update(s for item in batch for s in item.get("source_speakers", {}).values())
                     candidates.extend(await extract(encode(batch), allowed, "reduce", index, len(batches)))
                 if len(batches) == 1:
                     break

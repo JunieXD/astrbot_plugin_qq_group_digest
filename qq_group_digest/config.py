@@ -161,6 +161,7 @@ class Limits:
 class GenerationOptions:
     ecnu_thinking: str = "enabled"
     ecnu_reasoning_effort: str = "low"
+    ecnu_structured_output: bool = True
 
 
 @dataclass(frozen=True)
@@ -291,7 +292,9 @@ def parse_settings(raw):
     if limits.llm_context_tokens and limits.llm_context_tokens < limits.llm_output_tokens + 4000:
         raise DigestError("模型上下文应为输出预留空间，并至少容纳 4000 tokens 输入。")
     generation_raw = obj(raw.get("llm_generation", {}), "模型生成设置")
-    generation = {}
+    generation = {
+        "ecnu_structured_output": flag(generation_raw.get("ecnu_structured_output", True), "ECNU 结构化输出")
+    }
     for key, choices in (
         ("ecnu_thinking", ("enabled", "disabled", "inherit")),
         ("ecnu_reasoning_effort", ("low", "medium", "high", "xhigh", "max")),

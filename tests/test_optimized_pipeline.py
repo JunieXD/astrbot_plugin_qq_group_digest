@@ -7,7 +7,7 @@ import pytest
 
 from qq_group_digest.config import Limits
 from qq_group_digest.history import normalize
-from qq_group_digest.model_options import request_provider
+from qq_group_digest.model_options import DIGEST_RESPONSE_FORMAT, request_provider
 from qq_group_digest.models import Message
 from qq_group_digest.summarizer import Summarizer
 from qq_group_digest.transcript import InputBudget, Transcript
@@ -116,7 +116,8 @@ def test_reply_ids_names_and_time_survive_compact_encoding(task):
         NOW - 100,
     )
     records = json.loads(data.serialize(data.records))
-    assert records["messages"][1][4] == ["m1"]
+    assert records["messages"][1][4] == [1]
+    assert [r[0] for r in records["messages"]] == [1, 2]
     assert "引用消息 101" not in records["messages"][1][3]
     assert records["messages"][1][1] == 90
     assert records["messages"][0][2] != records["messages"][1][2]
@@ -133,9 +134,9 @@ def test_bounded_chunks_include_reply_context(task):
     chunks = transcript.chunks(budget, 10)
     assert len(chunks) > 1 and all(budget.fits(chunk) for chunk in chunks)
     records = [json.loads(chunk)["messages"] for chunk in chunks]
-    assert {f"m{i}" for i in range(1, 61)} == {r[0] for chunk in records for r in chunk}
-    reply_chunks = [chunk for chunk in records if any(r[0] == "m31" for r in chunk)]
-    assert any(any(r[0] == "m1" for r in chunk) for chunk in reply_chunks)
+    assert set(range(1, 61)) == {r[0] for chunk in records for r in chunk}
+    reply_chunks = [chunk for chunk in records if any(r[0] == 31 for r in chunk)]
+    assert any(any(r[0] == 1 for r in chunk) for chunk in reply_chunks)
     assert any({r[0] for r in a} & {r[0] for r in b} for a, b in zip(records, records[1:]))
 
 
@@ -156,7 +157,7 @@ def test_ecnu_options_do_not_mutate_shared_provider(task):
     assert local.client is not client
     assert options["thinking"] == {"type": "enabled"}
     assert options["reasoning_effort"] == "low"
-    assert options["response_format"] == {"type": "json_object"}
+    assert options["response_format"] == DIGEST_RESPONSE_FORMAT
     assert "temperature" not in options
 
 
@@ -200,6 +201,7 @@ def test_empty_records_cannot_leave_source_number_holes(task):
     )
     assert [r[0] for r in transcript.records] == [1, 2]
     assert transcript.records[-1][4] == [0, 1]
+    assert json.loads(transcript.serialize(transcript.records))["messages"][-1][4] == [0, 1]
 
 
 def test_attribution_placeholder_must_resolve_to_visible_source(task):

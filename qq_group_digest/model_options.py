@@ -6,6 +6,43 @@ from .config import DigestError, GenerationOptions
 
 CONTEXTS = {"ecnu-max": 512000, "ecnu-plus": 256000}
 ECNU_EFFORTS = {"ecnu-max": ("low", "high", "max"), "ecnu-plus": ("low", "medium", "xhigh")}
+DIGEST_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "qq_group_digest",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "subject": {"type": "string"},
+                            "title": {"type": "string"},
+                            "body": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 1,
+                                "maxItems": 8,
+                            },
+                            "sources": {
+                                "type": "array",
+                                "items": {"type": "string", "pattern": "^u[1-9][0-9]*$"},
+                                "minItems": 1,
+                                "maxItems": 20,
+                            },
+                        },
+                        "required": ["subject", "title", "body", "sources"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["items"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 def effective_options(model, config, limits, generation=None):
@@ -13,9 +50,14 @@ def effective_options(model, config, limits, generation=None):
     model = model.strip().lower()
     options = deepcopy(config.get("custom_extra_body") or {})
     if model in CONTEXTS:
-        # Preserve semantic lengths and do not constrain characters while decoding.
+        # Constrain structure, not sentence length; validate source membership locally
+        # instead of adding a potentially huge per-transcript enum to the schema.
         options.update(
-            response_format={"type": "json_object"},
+            response_format=(
+                deepcopy(DIGEST_RESPONSE_FORMAT)
+                if generation.ecnu_structured_output
+                else {"type": "json_object"}
+            ),
             max_tokens=limits.llm_output_tokens,
         )
         if generation.ecnu_thinking != "inherit":

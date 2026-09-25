@@ -38,6 +38,7 @@
     "llm_input_chars": 0
   },
   "llm_generation": {
+    "ecnu_structured_output": true,
     "ecnu_thinking": "enabled",
     "ecnu_reasoning_effort": "low"
   }

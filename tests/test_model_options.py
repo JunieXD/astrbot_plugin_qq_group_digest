@@ -8,7 +8,8 @@ import pytest
 from qq_group_digest.config import DigestError, GenerationOptions, Limits, parse_settings
 from qq_group_digest.llm_client import LLMClient, usable_completion
 from qq_group_digest.llm_stats import UsageStore
-from qq_group_digest.model_options import effective_options, request_provider
+from qq_group_digest.model_options import DIGEST_RESPONSE_FORMAT, effective_options, request_provider
+from qq_group_digest.transcript import encode
 
 
 class SDK:
@@ -98,7 +99,10 @@ def test_disabled_inherited_and_non_ecnu_settings(task):
     assert effective_options(provider.model, before, Limits()) == before["custom_extra_body"]
 
 
-@pytest.mark.parametrize("raw", [[], {"ecnu_thinking": True}, {"ecnu_reasoning_effort": "unknown"}])
+@pytest.mark.parametrize(
+    "raw",
+    [[], {"ecnu_thinking": True}, {"ecnu_reasoning_effort": "unknown"}, {"ecnu_structured_output": "false"}],
+)
 def test_invalid_generation_settings_rejected(raw):
     with pytest.raises(DigestError):
         parse_settings({"llm_generation": raw})
@@ -132,6 +136,14 @@ async def test_configuration_reaches_request_statistics_and_result_cache(
         assert high_key not in (enabled_key, disabled_key) and cached is None
         current[0] = replace(settings, llm_generation=GenerationOptions("enabled", "low"))
         assert (await client.cached(task, adapter, "input"))[1] == '{"items":[]}'
+        schema_budget = await client.budget(task, adapter)
+        current[0] = replace(settings, llm_generation=GenerationOptions("enabled", "low", False))
+        plain_key, cached = await client.cached(task, adapter, "input")
+        assert plain_key not in (enabled_key, disabled_key, high_key) and cached is None
+        plain_budget = await client.budget(task, adapter)
+        assert plain_budget.bytes - schema_budget.bytes == len(encode(DIGEST_RESPONSE_FORMAT)) - len(
+            encode({"type": "json_object"})
+        )
         assert provider.calls[0]["reasoning_effort"] == "low"
         assert provider.calls[1]["thinking"] == {"type": "disabled"}
         assert "reasoning_effort" not in provider.calls[1]
@@ -139,6 +151,7 @@ async def test_configuration_reaches_request_statistics_and_result_cache(
         rows = statistics.query(group_ids=[task.source_group], content=True)
         assert len(rows) == 2 and all(row["status"] == "success" for row in rows)
         assert json.loads(rows[0]["request_options"])["reasoning_effort"] == "low"
+        assert json.loads(rows[0]["request_options"])["response_format"] == DIGEST_RESPONSE_FORMAT
         assert rows[0]["reasoning_tokens"] == 30 and rows[0]["output_tokens"] == 50
         assert "private-reasoning-test-marker" not in json.dumps(rows)
     finally:
@@ -148,3 +161,24 @@ async def test_configuration_reaches_request_statistics_and_result_cache(
 def test_reasoning_only_response_is_not_used_as_summary():
     with pytest.raises(DigestError, match="空正文"):
         usable_completion(SimpleNamespace(role="assistant", completion_text="", reasoning_content="thinking"))
+
+
+def test_structured_output_is_isolated_bounded_and_can_use_plain_json(task):
+    provider = Provider()
+    before = deepcopy(provider.provider_config)
+    original_format = deepcopy(DIGEST_RESPONSE_FORMAT)
+    _, options = request_provider(provider, task, Limits(), {f"u{i}" for i in range(1, 20001)})
+    assert options["response_format"] == original_format
+    assert len(encode(options["response_format"])) < 1000  # No giant source enum per call.
+    schema = options["response_format"]["json_schema"]["schema"]
+    item = schema["properties"]["items"]["items"]
+    assert schema["required"] == ["items"] and not schema["additionalProperties"]
+    assert set(item["required"]) == {"subject", "title", "body", "sources"}
+    assert not item["additionalProperties"]
+    assert item["properties"]["body"]["type"] == "array"
+    assert item["properties"]["sources"]["items"]["pattern"] == "^u[1-9][0-9]*$"
+    item["required"].clear()
+    assert DIGEST_RESPONSE_FORMAT == original_format and provider.provider_config == before
+    generation = parse_settings({"llm_generation": {"ecnu_structured_output": False}}).llm_generation
+    _, options = request_provider(provider, task, Limits(), generation=generation)
+    assert options["response_format"] == {"type": "json_object"}

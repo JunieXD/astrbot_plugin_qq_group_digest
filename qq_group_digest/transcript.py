@@ -79,9 +79,11 @@ class Transcript:
         # Line boundaries aid reference lookup at negligible cost in tokens.
         rows = []
         for record in records:
-            row = [f"m{record[0]}", record[1], f"u{record[2]}", record[3]]
+            # Numeric message/reply IDs save repeated string wrappers; author labels
+            # stay explicitly prefixed to keep attribution distinct from message IDs.
+            row = [record[0], record[1], f"u{record[2]}", record[3]]
             if len(record) > 4:
-                row.append([f"m{r}" if r else 0 for r in record[4]])
+                row.append(record[4])
             rows.append(row)
         return encode(self.header)[:-1] + ',"messages":[\n' + ",\n".join(map(encode, rows)) + "\n]}"
 
@@ -102,7 +104,7 @@ class Transcript:
         groups, current, byte_size, char_size = [], [], 0, 0
         for record in records:
             text = encode(record)
-            overhead = 8 + (3 * len(record[4]) if len(record) > 4 else 0)
+            overhead = 5  # u prefix, quotes, comma and newline in the serialized row.
             b, c = len(text.encode("utf-8")) + overhead, len(text) + overhead
             if current and (byte_size + b > room.bytes or (room.chars and char_size + c > room.chars)):
                 groups.append(current)

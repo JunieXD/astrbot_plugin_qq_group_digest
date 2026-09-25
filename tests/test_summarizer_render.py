@@ -163,7 +163,8 @@ async def test_large_single_message_is_not_silently_dropped(task):
 
 
 @pytest.mark.parametrize("attribute_speakers", [False, True])
-async def test_speaker_provenance_survives_chunking_and_reduction(task, attribute_speakers):
+@pytest.mark.parametrize("source_kind", ["message", "speaker"])
+async def test_speaker_provenance_survives_chunking_and_reduction(task, attribute_speakers, source_kind):
     class Client:
         extracted = {}
         reductions = 0
@@ -180,7 +181,7 @@ async def test_speaker_provenance_survives_chunking_and_reduction(task, attribut
             if merge:
                 self.reductions += 1
                 for item in data:
-                    if attribute_speakers:
+                    if attribute_speakers and source_kind == "message":
                         assert item["source_speakers"] == {
                             source_id(s): self.extracted[source_id(s)] for s in item["sources"]
                         }
@@ -191,7 +192,9 @@ async def test_speaker_provenance_survives_chunking_and_reduction(task, attribut
                 for record in data["messages"]:
                     if attribute_speakers:
                         self.extracted[source_id(record[0])] = record[2]
-                sources = list(dict.fromkeys(r[0] for r in data["messages"]))
+                sources = list(
+                    dict.fromkeys(r[0 if source_kind == "message" else 2] for r in data["messages"])
+                )
             return output(sources=sources, prompt=prompt, body="群友说法存在分歧，未经核实。")
 
     messages = [
