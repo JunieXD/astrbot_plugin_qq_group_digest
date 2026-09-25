@@ -37,8 +37,9 @@ LABELS = {
 
 
 class Commands:
-    def __init__(self, service):
+    def __init__(self, service, *, notify=None):
         self.s = service
+        self.notify = notify
 
     async def run(self, text):
         parts = text.strip().lstrip("/").split()
@@ -66,6 +67,13 @@ class Commands:
                     f"{task.label}（{task.source_group}）：{'已启用' if active else '已暂停/未启用'}\n"
                     f"下一计划时间：{period_text(task, due, due).split('—')[0]}（{task.timezone}）"
                 )
+                progress = self.s.previews.get(task.key)
+                if progress:
+                    elapsed = max(0, int(self.s.clock() - progress["started"]))
+                    result.append(
+                        f"私聊预览：{progress['phase']}，已读取 {progress['pages']} 页、"
+                        f"{progress['messages']} 条消息，已用 {elapsed // 60} 分 {elapsed % 60} 秒。"
+                    )
                 if attention_count:
                     result.append(f"需要处理 {attention_count} 个批次，优先显示最早的未解决记录。")
                 for run in runs:
@@ -97,7 +105,7 @@ class Commands:
             if self.s.lock(task.key).locked():
                 raise DigestError("这个群正在读取、生成或发送，请稍后再试。")
             if action == "预览":
-                digest, start, end = await self.s.preview(task)
+                digest, start, end = await self.s.preview(task, notify=self.notify)
                 return (
                     ("预览结果（未向目标群发送）：\n" + full_text(task, digest, start, end))
                     if digest.items

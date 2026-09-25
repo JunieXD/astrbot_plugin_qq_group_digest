@@ -121,12 +121,12 @@ class HistoryReader:
     def __init__(self, limits, journal):
         self.limits, self.journal = limits, journal
 
-    async def read(self, adapter, task, start, end):
+    async def read(self, adapter, task, start, end, *, progress=None):
         found, cursor, anchors, previous = {}, None, set(), None
         total_chars = 0
         crossed = False
         generation = None
-        for _ in range(self.limits.max_pages):
+        for page_number in range(1, self.limits.max_pages + 1):
             page = await adapter.history_page(
                 task.source_group, self.limits.page_size, cursor, generation=generation
             )
@@ -147,6 +147,12 @@ class HistoryReader:
                     found[message.key] = message
             if len(found) > self.limits.max_messages:
                 raise IncompleteHistory("本期消息超过读取上限；请增加发送次数或调整高级限制。")
+            if progress:
+                progress(page_number, len(found))
+            if page_number == 1 or page_number % 25 == 0:
+                self.journal.record(
+                    "历史读取进度", group=task.source_group, pages=page_number, messages=len(found)
+                )
             if oldest.time < start:
                 crossed = True
                 break

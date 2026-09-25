@@ -18,7 +18,7 @@ from .qq_group_digest.store import Store
 from .qq_group_digest.summarizer import LLMClient
 
 
-@register("astrbot_plugin_qq_group_digest", "JunieXD", "定时提炼 QQ 群聊并可靠投递摘要", "0.1.2")
+@register("astrbot_plugin_qq_group_digest", "JunieXD", "定时提炼 QQ 群聊并可靠投递摘要", "0.1.3")
 class QQGroupDigest(Star):
     def __init__(self, context: Context, config=None):
         super().__init__(context=context, config=config)
@@ -46,7 +46,7 @@ class QQGroupDigest(Star):
             )
             await self.service.start()
             self.start_error = ""
-            logger.info("QQ 群聊摘要 v0.1.2 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。")
+            logger.info("QQ 群聊摘要 v0.1.3 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。")
         except BaseException as exc:
             if self.journal:
                 self.journal.record("初始化失败", error_type=type(exc).__name__)
@@ -86,20 +86,28 @@ class QQGroupDigest(Star):
             return
         service = self.service
         if service is None or service.stopping:
-            yield event.plain_result(self.start_error or "插件正在停止，请稍后重试。")
+            await event.send(event.plain_result(self.start_error or "插件正在停止，请稍后重试。"))
             return
         current = asyncio.current_task()
         service.commands.add(current)
+
+        async def reply(text):
+            # stop_event also blocks yielded results in current AstrBot versions.
+            await asyncio.wait_for(
+                event.send(event.plain_result(text)), service.settings().limits.api_timeout_seconds
+            )
+
         try:
-            result = await Commands(service).run(event.get_message_str())
-        except DigestError as exc:
-            result = str(exc)
-        except Exception as exc:
-            service.journal.record("管理员命令失败", error_type=type(exc).__name__)
-            result = "操作未完成，请查看插件日志。"
+            try:
+                result = await Commands(service, notify=reply).run(event.get_message_str())
+            except DigestError as exc:
+                result = str(exc)
+            except Exception as exc:
+                service.journal.record("管理员命令失败", error_type=type(exc).__name__)
+                result = "操作未完成，请查看插件日志。"
+            # Bound the reply as well; long status output is inspected per source group.
+            if len(result) > 3800:
+                result = result[:3750] + "\n内容较长，请按来源群查看状态，或减少预览摘要长度。"
+            await reply(result)
         finally:
             service.commands.discard(current)
-        # Bound the reply as well; long status output is inspected per source group.
-        if len(result) > 3800:
-            result = result[:3750] + "\n内容较长，请按来源群查看状态，或减少预览摘要长度。"
-        yield event.plain_result(result)

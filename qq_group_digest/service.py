@@ -24,6 +24,7 @@ class Service:
         self.wake = asyncio.Event()
         self.workers, self.locks = {}, {}
         self.commands = set()
+        self.previews = {}
         self.cron_ids = []
         self.loop_task = None
         self.stop_task = None
@@ -248,7 +249,7 @@ class Service:
             "摘要生成完成", run=run["id"], topics=len(digest.items), deliveries=len(deliveries)
         )
 
-    async def preview(self, task):
+    async def preview(self, task, *, notify=None):
         async with self.lock(task.key):
             until = await self.store.call("get", "preview:" + task.key, 0)
             if until > self.clock():
@@ -256,11 +257,39 @@ class Service:
             await self.store.call("set", "preview:" + task.key, self.clock() + 60)
             end = int(self.clock())
             start = end - task.initial_hours * 3600
-            adapter = await self.router.resolve(task)
-            messages, notes = await HistoryReader(self.settings().limits, self.journal).read(
-                adapter, task, start, end
-            )
-            digest = await Summarizer(self.client, self.settings().limits).summarize(
-                task, adapter, messages, start, end, notes
-            )
-            return digest, start, end
+            progress = self.previews[task.key] = {
+                "started": self.clock(),
+                "phase": "读取群聊中",
+                "pages": 0,
+                "messages": 0,
+            }
+
+            def reading(pages, messages):
+                progress.update(pages=pages, messages=messages)
+
+            self.journal.record("私聊预览开始", group=task.source_group, start=start, end=end)
+            try:
+                if notify:
+                    await notify(
+                        f"已收到，正在整理「{task.label}」最近 {task.initial_hours} 小时的群聊。"
+                        "读取和生成可能需要数分钟，完成后会在这里回复。\n"
+                        f"可发送 /群摘要 状态 {task.source_group} 查看进度；无需重复预览。"
+                    )
+                adapter = await self.router.resolve(task)
+                messages, notes = await HistoryReader(self.settings().limits, self.journal).read(
+                    adapter, task, start, end, progress=reading
+                )
+                progress["phase"] = "模型生成中"
+                digest = await Summarizer(self.client, self.settings().limits).summarize(
+                    task, adapter, messages, start, end, notes
+                )
+                self.journal.record("私聊预览完成", group=task.source_group, topics=len(digest.items))
+                return digest, start, end
+            except asyncio.CancelledError:
+                self.journal.record("私聊预览取消", group=task.source_group)
+                raise
+            except Exception as exc:
+                self.journal.record("私聊预览失败", group=task.source_group, error_type=type(exc).__name__)
+                raise
+            finally:
+                self.previews.pop(task.key, None)
