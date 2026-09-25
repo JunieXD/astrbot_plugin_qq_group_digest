@@ -221,7 +221,11 @@ async def test_empty_window_never_calls_model(task):
 
 
 @pytest.mark.parametrize("mode", MODES)
-def test_four_modes_use_literal_text_and_robot_identity(task, mode):
+@pytest.mark.parametrize(
+    "card_title,content_title",
+    [("", ""), ("✨ 自定义封面", ""), ("", "自定义正文"), ("封面", "✨ [CQ:at,qq=all] 正文")],
+)
+def test_four_modes_use_literal_text_and_robot_identity(task, mode, card_title, content_title):
     digest = Digest(
         [
             Item("通知", "[CQ:at,qq=all] 不应触发提及（未经核实）", ("m1",)),
@@ -229,17 +233,24 @@ def test_four_modes_use_literal_text_and_robot_identity(task, mode):
         ],
         ["图片未识别", "技术诊断不对群成员展示"],
     )
-    payloads = make_payloads(replace(task, mode=mode), digest, NOW - 100, NOW, "111111111", Limits())
+    task = replace(task, mode=mode, card_title=card_title, content_title=content_title)
+    payloads = make_payloads(task, digest, NOW - 100, NOW, "111111111", Limits())
+    expected_heading = (content_title or f"✨ {task.label} · 群聊摘要") + "\n\n"
     serialized = json.dumps(payloads, ensure_ascii=False)
     assert "未经核实" not in serialized and "技术诊断" not in serialized and "图片未识别" not in serialized
     assert "https://example.org" in serialized
     if mode.startswith("普通"):
         assert all(seg["type"] == "text" for p in payloads for seg in p["message"])
         assert len(payloads) == (1 if mode.endswith("整篇") else 2)
+        assert all(p["message"][0]["data"]["text"].startswith(expected_heading) for p in payloads)
     else:
         assert len(payloads) == 1
         assert len(payloads[0]["messages"]) == (1 if mode.endswith("整篇") else 3)
         assert all(n["data"]["user_id"] == "111111111" for n in payloads[0]["messages"])
+        assert payloads[0]["source"] == (card_title or f"✨ {task.label} · 群聊摘要")
+        assert payloads[0]["prompt"] == (f"[{card_title}]" if card_title else "[✨ 群聊摘要]")
+        assert all(s["type"] == "text" for n in payloads[0]["messages"] for s in n["data"]["content"])
+        assert payloads[0]["messages"][0]["data"]["content"][0]["data"]["text"].startswith(expected_heading)
 
 
 def test_single_message_limit_and_split_limit(task):

@@ -84,6 +84,8 @@ class Task:
     max_topics: int = 8
     summary_chars: int = 1200
     attribute_speakers: bool = False
+    card_title: str = ""
+    content_title: str = ""
 
     @property
     def key(self):
@@ -221,6 +223,15 @@ def parse_settings(raw):
             "provider_id": str(d.get("provider_id", "")).strip(),
             "bot_qq": identifier(more.get("bot_qq"), "机器人 QQ", optional=True),
         }
+        for key, label in [("card_title", "卡片外部标题"), ("content_title", "正文顶部标题")]:
+            value = d.get(key, "")
+            if (
+                not isinstance(value, str)
+                or len(value.strip()) > 80
+                or any(ord(c) < 32 or 127 <= ord(c) < 160 or c in "\u2028\u2029" for c in value)
+            ):
+                raise DigestError(f"{label}应为单行文字，最多 80 字；留空使用默认标题。")
+            kw[key] = value.strip()
         for key, default in [("enabled", True), ("include_source", True)]:
             kw[key] = flag(d.get(key, default), key)
         for key in ["read_forwards", "fallback_to_plain", "attribute_speakers"]:

@@ -1,3 +1,3 @@
 """Scheduled, durable QQ group digests for AstrBot."""
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"

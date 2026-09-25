@@ -17,6 +17,8 @@
       "focus": "提取有实际用途的通知、截止时间、资源链接、问题结论和新的进展。忽略闲聊、广告和重复内容。",
       "provider_id": "",
       "mode": "合并转发·分条",
+      "card_title": "✨ 群聊情报站",
+      "content_title": "今日群聊精选",
       "advanced": {
         "bot_qq": "",
         "timezone": "Asia/Shanghai",

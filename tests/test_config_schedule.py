@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 
-from qq_group_digest.config import DigestError, GenerationOptions, Limits, Pace, parse_settings
+from qq_group_digest.config import DigestError, GenerationOptions, Limits, Pace, Task, parse_settings
 from qq_group_digest.schedule import latest_boundary, next_boundary
 
 
@@ -23,6 +23,10 @@ def test_schema_defaults_and_example_match_runtime():
     parsed = parse_settings(example)
     assert parsed.tasks[0].targets == ("987654321",)
     assert parsed.tasks[0].mode == "合并转发·分条"
+    task_schema = schema["tasks"]["templates"]["task"]["items"]
+    for key in ("card_title", "content_title"):
+        assert task_schema[key]["default"] == getattr(Task, key) == ""
+        assert getattr(parsed.tasks[0], key) == example["tasks"][0][key]
 
 
 @pytest.mark.parametrize(
@@ -34,6 +38,12 @@ def test_schema_defaults_and_example_match_runtime():
         {"mode": "invalid"},
         {"include_source": False, "target_groups": []},
         {"enabled": "false"},
+        {"card_title": "长" * 81},
+        {"card_title": None},
+        {"card_title": "外部\n标题"},
+        {"content_title": "长" * 81},
+        {"content_title": ["正文标题"]},
+        {"content_title": "正文\u2028标题"},
         {"advanced": {"timezone": "Invalid/Zone"}},
         {"advanced": {"summary_chars": True}},
         {"advanced": {"overlap_minutes": -1}},
@@ -57,6 +67,17 @@ def test_duplicate_source_and_bad_ranges():
 def test_name_change_preserves_key(task):
     assert replace(task, name="新的名称").key == task.key
     assert replace(task, source_group="777777777").key != task.key
+    changed = parse_settings(
+        {"tasks": [{"source_group": task.source_group, "card_title": " ✨ 封面 ", "content_title": " 正文 "}]}
+    ).tasks[0]
+    assert (changed.card_title, changed.content_title) == ("✨ 封面", "正文")
+    assert changed.key == task.key
+    assert Task.restore(changed.dump()) == changed
+    old_snapshot = changed.dump()
+    old_snapshot.pop("card_title")
+    old_snapshot.pop("content_title")
+    restored = Task.restore(old_snapshot)
+    assert restored.key == task.key and restored.card_title == restored.content_title == ""
 
 
 def test_boundaries_use_scheduled_time_not_execution_time(task):

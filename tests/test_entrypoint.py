@@ -123,7 +123,7 @@ async def test_preview_ack_progress_and_result_survive_stopped_event(
     from .test_service import make_service
     from .test_summarizer_render import output
 
-    task = replace(task, mode=mode)
+    task = replace(task, mode=mode, card_title="✨ 保研情报站", content_title="今日保研精选")
     settings = replace(settings, enabled=False, tasks=(task,))
     service, api = make_service(store, settings, journal)
     entrypoint.service = service
@@ -153,11 +153,14 @@ async def test_preview_ack_progress_and_result_survive_stopped_event(
         assert payload["user_id"] == event.get_sender_id() and "group_id" not in payload
         if mode.startswith("合并转发"):
             assert action == "send_private_forward_msg"
-            assert payload["source"].startswith("✨") and payload["summary"] == "共 1 条 · 点开查看"
+            assert payload["source"] == "✨ 保研情报站" and payload["summary"] == "共 1 条 · 点开查看"
+            assert payload["prompt"] == "[✨ 保研情报站]"
             assert len(payload["messages"]) == (1 if mode.endswith("整篇") else 2)
+            assert payload["messages"][0]["data"]["content"][0]["data"]["text"].startswith("今日保研精选\n\n")
         else:
             assert action == "send_private_msg"
             assert "截止时间为明天" in payload["message"][0]["data"]["text"]
+            assert payload["message"][0]["data"]["text"].startswith("今日保研精选\n\n")
         assert await store.call("get", "cursor:" + task.key) is None
         assert not await store.call("latest", task.key)
     assert not service.previews and not service.commands
