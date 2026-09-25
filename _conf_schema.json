@@ -306,7 +306,7 @@
         "description": "模型输入字符上限（0 自动）",
         "type": "int",
         "default": 0,
-        "hint": "0 优先整段输入并按模型上下文限制；手动可设 4000～2000000。ECNU Max/Plus 自动识别，其余模型默认按 32000 tokens 保守预算。"
+        "hint": "0 优先整段输入，ECNU Max 使用官方 V4 分词器计数。手动可设 4000～2000000，作为独立字符硬上限；非 V4 模型保留保守预算。"
       },
       "history_cache_minutes": {
         "description": "历史查询缓存可复用几分钟",

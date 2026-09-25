@@ -11,9 +11,9 @@ import uuid
 from .config import DigestError
 from .llm_usage import extract_usage
 from .llm_usage import field as value
-from .model_options import CONTEXTS, effective_options, request_provider
+from .model_options import effective_options, request_provider
 from .prompts import SYSTEM
-from .transcript import InputBudget, encode
+from .token_budget import request_budget
 
 
 def usable_completion(response):
@@ -69,16 +69,15 @@ class LLMClient:
         _, model, provider = await self.describe(task, adapter)
         settings = self.settings()
         limits = settings.limits
-        known = CONTEXTS.get(model.lower())
-        context = limits.llm_context_tokens or known or 32000
-        if known:
-            context = min(context, known)
         config = getattr(provider, "provider_config", {})
         options = effective_options(
             model, config if isinstance(config, dict) else {}, limits, settings.llm_generation
         )
-        format_bytes = len(encode(options.get("response_format", {})).encode("utf-8"))
-        return InputBudget(context - limits.llm_output_tokens - 2048 - format_bytes, limits.llm_input_chars)
+        budget, details = await asyncio.to_thread(
+            request_budget, model, limits, SYSTEM, options.get("response_format")
+        )
+        self.journal.record("模型输入预算", group=task.source_group, **details)
+        return budget
 
     async def cached(self, task, adapter, prompt):
         settings = self.settings()
@@ -144,6 +143,23 @@ class LLMClient:
                 kwargs.get("allowed_sources"),
                 generation=settings.llm_generation,
             )
+            budget_options = options
+            if not local:
+                config = getattr(provider, "provider_config", {})
+                budget_options = effective_options(
+                    model, config if isinstance(config, dict) else {}, limits, settings.llm_generation
+                )
+            budget, estimate = await asyncio.to_thread(
+                request_budget, model, limits, SYSTEM, budget_options.get("response_format")
+            )
+            user_units = await asyncio.to_thread(budget.count, prompt)
+            if user_units > budget.limit or (budget.chars and len(prompt) > budget.chars):
+                raise DigestError("完整摘要请求超过模型输入预算，请调整输入限制或缩短统计时间。")
+            estimate["user_input_units"] = user_units
+            if estimate["budget_unit"] == "tokens":
+                estimate["estimated_input_tokens"] = (
+                    estimate["system_units"] + estimate["schema_units"] + user_units
+                )
             await self.store.call(
                 "reserve_llm", run_id, time.time(), limits.llm_calls_per_day, limits.llm_calls_per_run
             )
@@ -171,6 +187,7 @@ class LLMClient:
                 attempt=attempt,
                 input_chars=len(prompt) + len(SYSTEM),
                 call_id=call_id,
+                **estimate,
             )
             try:
                 request = (

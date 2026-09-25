@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -13,7 +14,8 @@ from .llm_client import usable_completion as usable_completion
 from .models import Digest
 from .prompts import SYSTEM
 from .schedule import period_text
-from .transcript import InputBudget, Transcript, encode, source_id
+from .token_budget import request_budget
+from .transcript import Transcript, encode, source_id
 from .validation import OutputError, parse_digest
 
 
@@ -62,16 +64,14 @@ class Summarizer:
         if hasattr(self.client, "budget"):
             budget = await self.client.budget(task, adapter)
         else:
-            from .model_options import CONTEXTS
-
-            context = self.limits.llm_context_tokens or CONTEXTS.get(
-                task.provider_id.rsplit("/", 1)[-1], 32000
+            budget, _ = await asyncio.to_thread(
+                request_budget, task.provider_id.rsplit("/", 1)[-1], self.limits, SYSTEM
             )
-            budget = InputBudget(context - self.limits.llm_output_tokens - 2048, self.limits.llm_input_chars)
-        room = budget.subtract(SYSTEM + instructions + footer + merge_marker)
-        if room.bytes < 1000 or (room.chars and room.chars < 1000):
+        room = budget.wrapped(instructions + "\n聊天记录：\n", footer)
+        merge_room = budget.wrapped(instructions + "\n" + merge_marker + "\n", footer)
+        if not await asyncio.to_thread(room.fits, transcript.serialize([])):
             raise DigestError("关注内容过长，模型输入空间不足。")
-        chunks = transcript.chunks(room, self.limits.llm_overlap_messages)
+        chunks = await asyncio.to_thread(transcript.chunks, room, self.limits.llm_overlap_messages)
         calls, job_id = 0, self.run_id or "preview:" + uuid.uuid4().hex
         self.progress(phase="模型生成中", chunks=len(chunks), chunk=0, calls=0)
 
@@ -89,7 +89,7 @@ class Summarizer:
             nonlocal calls
             marker = merge_marker if phase == "reduce" else "聊天记录："
             prompt = instructions + "\n" + marker + "\n" + content + footer
-            if not budget.fits(SYSTEM + prompt):
+            if not await asyncio.to_thread(budget.fits, prompt):
                 raise DigestError("摘要输入超过模型预算。")
             key = None
             if hasattr(self.client, "cached"):
@@ -151,7 +151,7 @@ class Summarizer:
                         repaired = instructions + correction + "\n待修正摘要：\n" + encode(reduced) + footer
                     else:
                         repaired = prompt + correction
-                    if not budget.fits(SYSTEM + repaired):
+                    if not await asyncio.to_thread(budget.fits, repaired):
                         raise DigestError("修正摘要所需输入超过模型预算，请提高输入限制。") from exc
                     prompt = repaired
                     continue
@@ -178,10 +178,10 @@ class Summarizer:
                 batches, current = [], []
                 for item in candidates:
                     data = candidate(item)
-                    if current and not room.fits(encode([*current, data])):
+                    if current and not await asyncio.to_thread(merge_room.fits, encode([*current, data])):
                         batches.append(current)
                         current = []
-                    if not room.fits(encode([data])):
+                    if not await asyncio.to_thread(merge_room.fits, encode([data])):
                         raise DigestError("单条候选摘要超过合并输入限制。")
                     current.append(data)
                 if current:

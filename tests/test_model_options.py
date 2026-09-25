@@ -141,9 +141,9 @@ async def test_configuration_reaches_request_statistics_and_result_cache(
         plain_key, cached = await client.cached(task, adapter, "input")
         assert plain_key not in (enabled_key, disabled_key, high_key) and cached is None
         plain_budget = await client.budget(task, adapter)
-        assert plain_budget.bytes - schema_budget.bytes == len(encode(DIGEST_RESPONSE_FORMAT)) - len(
-            encode({"type": "json_object"})
-        )
+        assert plain_budget.limit - schema_budget.limit == schema_budget.count(
+            encode(DIGEST_RESPONSE_FORMAT)
+        ) - plain_budget.count(encode({"type": "json_object"}))
         assert provider.calls[0]["reasoning_effort"] == "low"
         assert provider.calls[1]["thinking"] == {"type": "disabled"}
         assert "reasoning_effort" not in provider.calls[1]

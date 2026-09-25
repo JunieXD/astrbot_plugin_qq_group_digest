@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -21,23 +20,6 @@ def source_id(value):
     if isinstance(value, str) and re.fullmatch(r"m[0-9]{1,9}", value):
         return f"m{int(value[1:]):06d}"
     return value
-
-
-@dataclass(frozen=True)
-class InputBudget:
-    """UTF-8 bytes conservatively bound byte-token vocabularies; never call them measured tokens."""
-
-    bytes: int
-    chars: int = 0
-
-    def fits(self, text):
-        return len(text.encode("utf-8")) <= self.bytes and (not self.chars or len(text) <= self.chars)
-
-    def subtract(self, text, reserve=256):
-        return InputBudget(
-            self.bytes - len(text.encode("utf-8")) - reserve,
-            max(1, self.chars - len(text) - reserve) if self.chars else 0,
-        )
 
 
 class Transcript:
@@ -91,51 +73,39 @@ class Transcript:
         whole = self.serialize(self.records)
         if budget.fits(whole):
             return [whole]
-        # Reserve a complete header, so the linear packer never relies on optimistic token estimates.
-        header = encode({**self.header, "messages": []})
-        packing = InputBudget(int(budget.bytes * 0.85), int(budget.chars * 0.85) if budget.chars else 0)
-        room = packing.subtract(header, reserve=16)
-        if room.bytes < 1000 or (room.chars and room.chars < 1000):
-            # Keep progress possible when a small model leaves little room after its header.
-            return self._small_chunks(budget, overlap)
+        # Only an oversized window is partitioned. Leave room for reply/adjacent
+        # context and check complete serialized prompts, never sums of row counts.
+        packing = budget.scaled(0.85)
+        if not packing.fits(self.serialize([])):
+            packing = budget
         records = []
         for record in self.records:
-            records.extend(self._split_record(record, room))
-        groups, current, byte_size, char_size = [], [], 0, 0
-        for record in records:
-            text = encode(record)
-            overhead = 5  # u prefix, quotes, comma and newline in the serialized row.
-            b, c = len(text.encode("utf-8")) + overhead, len(text) + overhead
-            if current and (byte_size + b > room.bytes or (room.chars and char_size + c > room.chars)):
-                groups.append(current)
-                current, byte_size, char_size = [], 0, 0
-            current.append(record)
-            byte_size += b
-            char_size += c
-        if current:
-            groups.append(current)
+            records.extend(self._split_record(record, packing))
+        groups, start = [], 0
+        while start < len(records):
+            # Exponential growth followed by binary search avoids a quadratic
+            # tokenize-every-growing-prefix pass on a large chat window.
+            good, step = start + 1, 1
+            while good < len(records):
+                end = min(len(records), start + step * 2)
+                if not packing.fits(self.serialize(records[start:end])):
+                    break
+                good, step = end, step * 2
+            else:
+                end = good
+            low, high = good + 1, end - 1
+            while low <= high:
+                mid = (low + high) // 2
+                if packing.fits(self.serialize(records[start:mid])):
+                    good, low = mid, mid + 1
+                else:
+                    high = mid - 1
+            groups.append(records[start:good])
+            start = good
         return self._with_context(groups, budget, overlap)
 
-    def _small_chunks(self, budget, overlap):
-        groups, current = [], []
-        packing = InputBudget(int(budget.bytes * 0.85), int(budget.chars * 0.85) if budget.chars else 0)
-        for record in self.records:
-            # Account for per-record reply metadata even with a small configured budget.
-            room = packing.subtract(self.serialize([[*record[:3], "", *record[4:]]]), reserve=32)
-            for part in self._split_record(record, room):
-                if current and not packing.fits(self.serialize([*current, part])):
-                    groups.append(current)
-                    current = []
-                if not budget.fits(self.serialize([part])):
-                    raise DigestError("模型输入空间不足，无法容纳一条消息及其署名。")
-                current.append(part)
-        if current:
-            groups.append(current)
-        return self._with_context(groups, budget, overlap)
-
-    @staticmethod
-    def _split_record(record, room):
-        if room.fits(encode(record)):
+    def _split_record(self, record, budget):
+        if budget.fits(self.serialize([record])):
             return [record]
         text, result = record[3], []
         if not text:
@@ -145,7 +115,7 @@ class Transcript:
             while lo <= hi:
                 mid = (lo + hi) // 2
                 part = [*record[:3], text[:mid], *record[4:]]
-                if room.fits(encode(part) + ","):
+                if budget.fits(self.serialize([part])):
                     count, lo = mid, mid + 1
                 else:
                     hi = mid - 1

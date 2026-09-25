@@ -10,7 +10,8 @@ from qq_group_digest.history import normalize
 from qq_group_digest.model_options import DIGEST_RESPONSE_FORMAT, request_provider
 from qq_group_digest.models import Message
 from qq_group_digest.summarizer import Summarizer
-from qq_group_digest.transcript import InputBudget, Transcript
+from qq_group_digest.token_budget import InputBudget
+from qq_group_digest.transcript import Transcript
 from qq_group_digest.validation import OutputError, parse_digest
 
 from .conftest import NOW, raw_message
