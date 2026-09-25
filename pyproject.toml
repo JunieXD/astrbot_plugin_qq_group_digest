@@ -1,0 +1,23 @@
+[project]
+name = "astrbot-plugin-qq-group-digest"
+version = "0.1.0"
+description = "Scheduled LLM digests of QQ group history for AstrBot and NapCat"
+requires-python = ">=3.10"
+dependencies = ["tzdata>=2024.1"]
+license = "MIT"
+authors = [{name = "JunieXD"}]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.23,<2", "ruff>=0.11,<1", "pyyaml>=6,<7", "aiocqhttp>=1.4,<2"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

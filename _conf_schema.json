@@ -1,0 +1,324 @@
+{
+  "enabled": {
+    "description": "启用定时摘要",
+    "type": "bool",
+    "default": false,
+    "hint": "先添加任务并私聊机器人预览。开启后自动运行；关闭会停止尚未提交的投递。"
+  },
+  "tasks": {
+    "description": "摘要任务",
+    "type": "template_list",
+    "default": [],
+    "hint": "一个来源群添加一条；不同群可以选择不同模型、时间和展示方式。",
+    "templates": {
+      "task": {
+        "name": "添加一个来源群",
+        "display_item": "source_group",
+        "items": {
+          "name": {
+            "description": "任务名称",
+            "type": "string",
+            "default": "",
+            "hint": "方便辨认，例如“保研资讯”；改名保留进度。"
+          },
+          "source_group": {
+            "description": "从哪个群提取信息",
+            "type": "string",
+            "default": "",
+            "hint": "填写来源群号；机器人需要已在群内。一个来源群只添加一条任务。"
+          },
+          "enabled": {
+            "description": "启用这条任务",
+            "type": "bool",
+            "default": true
+          },
+          "target_groups": {
+            "description": "发到哪些群",
+            "type": "list",
+            "default": [],
+            "hint": "每行一个群号；可以留空并开启同时发到来源群。机器人需要能在目标群发言。"
+          },
+          "include_source": {
+            "description": "同时发到来源群",
+            "type": "bool",
+            "default": true
+          },
+          "times": {
+            "description": "每天什么时候发送",
+            "type": "list",
+            "default": [
+              "06:00",
+              "18:00"
+            ],
+            "hint": "每行一个 24 小时时间，格式 HH:MM。实际发送会等待生成和队列，统计截止时间保持不变。"
+          },
+          "focus": {
+            "description": "希望提取什么信息",
+            "type": "text",
+            "default": "提取有实际用途的通知、截止时间、资源链接、问题结论和新的进展。忽略闲聊、广告和重复内容。",
+            "hint": "写关注的主题、需要排除的内容和摘要偏好即可，输出格式由插件处理。"
+          },
+          "provider_id": {
+            "description": "使用哪个模型",
+            "type": "string",
+            "default": "",
+            "hint": "留空跟随来源群使用的模型。使用 AstrBot 中已有的模型，无需另填密钥。",
+            "_special": "select_provider"
+          },
+          "mode": {
+            "description": "摘要如何展示",
+            "type": "string",
+            "default": "普通消息·整篇",
+            "hint": "合并转发分条：群里一张卡片，点开后多个主题节点。普通分条：群里实际发送多条消息。",
+            "options": [
+              "普通消息·整篇",
+              "普通消息·分条",
+              "合并转发·整篇",
+              "合并转发·分条"
+            ]
+          },
+          "advanced": {
+            "description": "更多设置（默认即可）",
+            "type": "object",
+            "items": {
+              "bot_qq": {
+                "description": "使用哪个机器人 QQ",
+                "type": "string",
+                "default": "",
+                "hint": "只有一个机器人时留空。多个机器人时填写 QQ 号，每个 QQ 使用独立接入。"
+              },
+              "timezone": {
+                "description": "时间所在的时区",
+                "type": "string",
+                "default": "Asia/Shanghai",
+                "hint": "中国大陆保持默认即可。"
+              },
+              "overlap_minutes": {
+                "description": "多读取前一期的几分钟",
+                "type": "int",
+                "default": 10,
+                "hint": "帮助衔接上下文；最终仅发布本期新增信息和进展，0 表示关闭。"
+              },
+              "initial_hours": {
+                "description": "首次最多回看几小时",
+                "type": "int",
+                "default": 24,
+                "hint": "首次到计划时间才自动生成。私聊预览也使用此时长，1～168 小时。"
+              },
+              "catchup_hours": {
+                "description": "停机后最多补几小时",
+                "type": "int",
+                "default": 24,
+                "hint": "错过多个时间点合并补一份；更早时段会明确标记未覆盖，1～168 小时。"
+              },
+              "read_forwards": {
+                "description": "展开聊天中的合并转发",
+                "type": "bool",
+                "default": false,
+                "hint": "只展开一层文字，每个转发最多 100 个节点，会增加 QQ 查询。图片和文件正文不识别。"
+              },
+              "forward_limit": {
+                "description": "每期最多展开几个转发",
+                "type": "int",
+                "default": 5,
+                "hint": "1～20。超出部分会在摘要说明中标记。"
+              },
+              "fallback_to_plain": {
+                "description": "合并转发不可用时改发普通整篇",
+                "type": "bool",
+                "default": false,
+                "hint": "关闭时暂缓发送。仅在发送前确认能力不可用时切换；已提交后超时不会改发。"
+              },
+              "max_topics": {
+                "description": "每期最多几个主题",
+                "type": "int",
+                "default": 8,
+                "hint": "1～20。模型会优先选择最有价值的信息。"
+              },
+              "summary_chars": {
+                "description": "摘要正文最多多少字",
+                "type": "int",
+                "default": 1200,
+                "hint": "300～12000。选择普通整篇时，还需为标题和说明留出单条消息空间。"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "pace": {
+    "description": "执行节奏（默认即可）",
+    "type": "object",
+    "hint": "随机等待用于控制频率，不能保证避免 QQ 风控。",
+    "items": {
+      "read_min_seconds": {
+        "description": "查询间隔至少几秒",
+        "type": "float",
+        "default": 1.5,
+        "hint": "一次历史查询内部也可能触发多次 QQ 读取。"
+      },
+      "read_max_seconds": {
+        "description": "查询间隔最多几秒",
+        "type": "float",
+        "default": 3
+      },
+      "send_min_seconds": {
+        "description": "发送前至少等几秒",
+        "type": "float",
+        "default": 5,
+        "hint": "每条摘要随机等待；普通分条的每一条都经过队列。"
+      },
+      "send_max_seconds": {
+        "description": "发送前最多等几秒",
+        "type": "float",
+        "default": 20
+      },
+      "gap_min_seconds": {
+        "description": "两次自动操作至少隔几秒",
+        "type": "float",
+        "default": 8,
+        "hint": "与兼容的审核、清理、名片等插件共用队列。"
+      },
+      "gap_max_seconds": {
+        "description": "两次自动操作最多隔几秒",
+        "type": "float",
+        "default": 20
+      },
+      "recovery_min_seconds": {
+        "description": "连接恢复后至少等几秒",
+        "type": "float",
+        "default": 60,
+        "hint": "重载和重连会保留已预约的等待。"
+      },
+      "recovery_max_seconds": {
+        "description": "连接恢复后最多等几秒",
+        "type": "float",
+        "default": 180
+      },
+      "failure_cooldown_seconds": {
+        "description": "连续失败后休息几秒",
+        "type": "float",
+        "default": 600
+      },
+      "failure_threshold": {
+        "description": "连续失败几次后休息",
+        "type": "int",
+        "default": 3
+      },
+      "reads_per_hour": {
+        "description": "每个机器人每小时最多查询几次",
+        "type": "int",
+        "default": 360,
+        "hint": "本插件合计，包含预览、状态检查和历史核对；滚动一小时。"
+      },
+      "sends_per_day": {
+        "description": "每个机器人每天最多发几条摘要",
+        "type": "int",
+        "default": 80,
+        "hint": "本插件合计，按最近 24 小时计数。已提交且结果不明的发送也占额度。"
+      }
+    }
+  },
+  "limits": {
+    "description": "高级限制与数据保留",
+    "type": "object",
+    "items": {
+      "page_size": {
+        "description": "每页读取多少条消息",
+        "type": "int",
+        "default": 20,
+        "hint": "默认 20；5～100。越大，NapCat 单次处理负担越重。"
+      },
+      "max_pages": {
+        "description": "每期最多读取多少页",
+        "type": "int",
+        "default": 300,
+        "hint": "达到上限且未到时间边界会停止，不会把半份记录当完整摘要。"
+      },
+      "max_messages": {
+        "description": "每期最多处理多少条消息",
+        "type": "int",
+        "default": 5000,
+        "hint": "超出时暂停该批次；可增加每天发送次数，缩短每期时间。"
+      },
+      "max_history_chars": {
+        "description": "每期最多处理多少字原文",
+        "type": "int",
+        "default": 300000,
+        "hint": "包含展开转发的文字，超过则暂停。"
+      },
+      "llm_input_chars": {
+        "description": "单次模型输入最多多少字",
+        "type": "int",
+        "default": 16000,
+        "hint": "含提示词和正文；按字符控制，不是精确 token 数。可根据模型上下文大小调整。"
+      },
+      "llm_calls_per_run": {
+        "description": "每期最多调用模型几次",
+        "type": "int",
+        "default": 32,
+        "hint": "包含分块、合并与格式修复；自动重试和重载沿用计数，手动重试失败批次才重置，日额度不重置。"
+      },
+      "llm_calls_per_day": {
+        "description": "插件每天最多调用模型几次",
+        "type": "int",
+        "default": 100,
+        "hint": "包含私聊预览，按最近 24 小时计数。模型服务自身的网络重试不单独计数。"
+      },
+      "llm_timeout_seconds": {
+        "description": "一次模型调用最多等几秒",
+        "type": "int",
+        "default": 180
+      },
+      "api_timeout_seconds": {
+        "description": "一次 QQ 接口调用最多等几秒",
+        "type": "int",
+        "default": 45,
+        "hint": "发送超时会转为待核对，不会自动重发。"
+      },
+      "max_attempts": {
+        "description": "生成或发送准备失败最多试几次",
+        "type": "int",
+        "default": 3,
+        "hint": "已提交的发送不适用重试；使用私聊命令核对。"
+      },
+      "message_chars": {
+        "description": "普通消息单条最多多少字",
+        "type": "int",
+        "default": 2000,
+        "hint": "500～4000，默认 2000；最终能否发送仍以 QQ 返回为准。"
+      },
+      "max_parts": {
+        "description": "普通分条每群最多几条",
+        "type": "int",
+        "default": 12,
+        "hint": "避免长摘要刷屏，超过上限会暂停生成。"
+      },
+      "snapshot_days": {
+        "description": "输入快照保留几天",
+        "type": "int",
+        "default": 2,
+        "hint": "只在执行时读取并保存，完成或失败后到期清理。"
+      },
+      "result_days": {
+        "description": "已完成摘要保留几天",
+        "type": "int",
+        "default": 30,
+        "hint": "7～365。未处理完或待核对批次保留，避免丢失进度。"
+      },
+      "log_megabytes": {
+        "description": "每个日志文件最多多少 MiB",
+        "type": "int",
+        "default": 20,
+        "hint": "默认 20 MiB。日志记录进度和错误类型，不写聊天原文、提示词或密钥。"
+      },
+      "log_backups": {
+        "description": "保留几个旧日志文件",
+        "type": "int",
+        "default": 7,
+        "hint": "默认 7 个旧文件，另加当前文件。达到大小后轮转，不按日期删除。"
+      }
+    }
+  }
+}

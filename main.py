@@ -1,0 +1,102 @@
+"""AstrBot registration only; business logic is tested without a running bot."""
+
+from __future__ import annotations
+
+import asyncio
+
+from astrbot.api import logger
+from astrbot.api.event import filter
+from astrbot.api.star import Context, Star, StarTools, register
+
+from .qq_group_digest.commands import Commands
+from .qq_group_digest.config import DigestError, parse_settings
+from .qq_group_digest.pacing import get_guard
+from .qq_group_digest.platform import Router
+from .qq_group_digest.resources import InstanceLock, Journal
+from .qq_group_digest.service import Service
+from .qq_group_digest.store import Store
+from .qq_group_digest.summarizer import LLMClient
+
+
+@register("astrbot_plugin_qq_group_digest", "JunieXD", "定时提炼 QQ 群聊并可靠投递摘要", "0.1.0")
+class QQGroupDigest(Star):
+    def __init__(self, context: Context, config=None):
+        super().__init__(context=context, config=config)
+        self.raw_config = config if config is not None else {}
+        self.service = self.store = self.journal = self.lock = None
+        self.start_error = "插件尚未初始化。"
+
+    def settings(self):
+        return parse_settings(dict(self.raw_config))
+
+    async def initialize(self):
+        try:
+            settings = self.settings()
+            root = StarTools.get_data_dir("astrbot_plugin_qq_group_digest")
+            root.mkdir(parents=True, exist_ok=True)
+            self.lock = InstanceLock(root / "instance.lock")
+            self.journal = Journal(root, settings.limits)
+            self.store = Store(root / "state.sqlite3")
+            await self.store.call("open_db")
+            router = Router(self.context, self.store, self.settings, self.journal)
+            guard = get_guard(self.context, root.parent)
+            client = LLMClient(self.context, self.store, self.settings, self.journal)
+            self.service = Service(
+                self.context, self.settings, self.store, router, guard, client, self.journal
+            )
+            await self.service.start()
+            self.start_error = ""
+            logger.info("QQ 群聊摘要 v0.1.0 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。")
+        except BaseException as exc:
+            if self.journal:
+                self.journal.record("初始化失败", error_type=type(exc).__name__)
+            self.start_error = (
+                str(exc) if isinstance(exc, DigestError) else "初始化失败，请检查数据目录及 AstrBot 版本。"
+            )
+            logger.error("QQ 群聊摘要：%s [%s]", self.start_error, type(exc).__name__)
+            await self.terminate()
+            if not isinstance(exc, Exception):
+                raise
+
+    async def terminate(self):
+        try:
+            if self.service:
+                await self.service.stop()
+        finally:
+            try:
+                if self.store:
+                    await self.store.close()
+            finally:
+                if self.journal:
+                    self.journal.close()
+                if self.lock:
+                    self.lock.close()
+                self.service = self.store = self.journal = self.lock = None
+
+    @filter.command("群摘要", alias={"qgdigest"})
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    async def digest_command(self, event):
+        event.stop_event()
+        if not event.is_admin():
+            yield event.plain_result("这个命令仅供 AstrBot 管理员私聊使用。")
+            return
+        service = self.service
+        if service is None:
+            yield event.plain_result(self.start_error or "插件正在停止，请稍后重试。")
+            return
+        current = asyncio.current_task()
+        service.commands.add(current)
+        try:
+            result = await Commands(service).run(event.get_message_str())
+        except DigestError as exc:
+            result = str(exc)
+        except Exception as exc:
+            service.journal.record("管理员命令失败", error_type=type(exc).__name__)
+            result = "操作未完成，请查看插件日志。"
+        finally:
+            service.commands.discard(current)
+        # Bound the reply as well; long status output is inspected per source group.
+        if len(result) > 3800:
+            result = result[:3750] + "\n内容较长，请按来源群查看状态，或减少预览摘要长度。"
+        yield event.plain_result(result)
