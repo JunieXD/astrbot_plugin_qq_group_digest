@@ -26,7 +26,7 @@ class IncompleteHistory(DigestError):
 
 
 MODES = ("普通消息·整篇", "普通消息·分条", "合并转发·整篇", "合并转发·分条")
-DEFAULT_FOCUS = "提取有实际用途的通知、截止时间、资源链接、问题结论和新的进展。忽略闲聊、广告和重复内容。"
+DEFAULT_FOCUS = "提取能帮助群成员增进理解、改进做法或作出判断的具体信息，保留必要条件和来源。结合本期讨论按价值排序，忽略闲聊、广告和重复内容，不凑数。"
 
 
 def number(value, label, low, high, *, integral=True):
