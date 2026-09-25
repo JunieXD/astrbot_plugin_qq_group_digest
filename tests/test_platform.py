@@ -65,7 +65,8 @@ async def test_quota_survives_adapter_recreation(store, settings, journal):
     assert len(bot.calls) == 1
 
 
-async def test_reconnect_restarts_cooldown_and_prevents_write(store, settings, journal):
+@pytest.mark.parametrize("action", ["send_group_msg", "send_private_msg", "send_private_forward_msg"])
+async def test_reconnect_restarts_cooldown_and_prevents_write(store, settings, journal, action):
     from dataclasses import replace
 
     settings = replace(
@@ -75,7 +76,7 @@ async def test_reconnect_restarts_cooldown_and_prevents_write(store, settings, j
     adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
     await adapter.check_connection()
     with pytest.raises(Deferred):
-        await adapter.transport("send_group_msg", group_id="123456789", message=[])
+        await adapter.transport(action, message=[])
     assert not bot.calls
     adapter.clock = lambda: NOW + 61
     await adapter.ready_to_send()
@@ -110,6 +111,20 @@ async def test_router_never_guesses_between_accounts(store, task, settings, jour
     router = Router(context, store, lambda: settings, journal)
     with pytest.raises(DigestError, match="唯一"):
         await router.resolve(task)
+
+
+async def test_private_reply_routes_by_event_and_rejects_changed_account(store, settings, journal):
+    router = Router(object(), store, lambda: settings, journal)
+    source, reply = Bot(), Bot()
+    source._wsr_api_clients = {"333333333": object()}
+    router.adapter("source", source)
+    event = SimpleNamespace(bot=reply, get_platform_id=lambda: "reply", get_self_id=lambda: "111111111")
+    adapter = await router.for_event(event)
+    assert adapter.bot is reply and adapter.account == "111111111"
+    assert await router.for_event(event) is adapter
+    reply._wsr_api_clients = {"444444444": object()}
+    with pytest.raises(DigestError, match="改变"):
+        await router.for_event(event)
 
 
 def test_shared_guard_reused_without_class_replacement(tmp_path):

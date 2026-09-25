@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from .config import DigestError, Task, identifier
-from .render import full_text
+from .preview import Preview
 from .schedule import next_boundary, period_text
 
 HELP = """群聊摘要（仅 AstrBot 管理员私聊使用）：
@@ -24,7 +24,7 @@ HELP = """群聊摘要（仅 AstrBot 管理员私聊使用）：
 /群摘要 重试 批次编号
 /群摘要 核对 批次编号
 /群摘要 跳过 批次编号 [目标群号]
-预览会调用模型，仅在私聊返回，不推进定时进度。
+预览会调用模型，按配置的展示方式在私聊返回，不推进定时进度。
 执行会处理最近一个计划时点，按配置投递；已处理的批次不会重复生成。
 核对只查历史；跳过会放弃指定批次的生成或尚未完成的投递，不会重新发送。"""
 
@@ -123,7 +123,7 @@ class Commands:
             if action == "预览":
                 digest, start, end = await self.s.preview(task, notify=self.notify, refresh=refresh)
                 return (
-                    ("预览结果（未向目标群发送）：\n" + full_text(task, digest, start, end))
+                    Preview(task, digest, start, end)
                     if digest.items
                     else "本次预览没有提取到值得发布的新信息。"
                 )

@@ -14,13 +14,14 @@ from .qq_group_digest.config import DigestError, parse_settings
 from .qq_group_digest.llm_stats import UsageStore
 from .qq_group_digest.pacing import get_guard
 from .qq_group_digest.platform import Router
+from .qq_group_digest.preview import Preview, send_preview
 from .qq_group_digest.resources import InstanceLock, Journal
 from .qq_group_digest.service import Service
 from .qq_group_digest.store import Store
 from .qq_group_digest.summarizer import LLMClient
 
 
-@register("astrbot_plugin_qq_group_digest", "JunieXD", "定时提炼 QQ 群聊并可靠投递摘要", "0.2.3")
+@register("astrbot_plugin_qq_group_digest", "JunieXD", "定时提炼 QQ 群聊并可靠投递摘要", "0.2.4")
 class QQGroupDigest(Star):
     def __init__(self, context: Context, config=None):
         super().__init__(context=context, config=config)
@@ -56,7 +57,7 @@ class QQGroupDigest(Star):
                     "/qq_group_digest/preview", self.api_preview, ["POST"], "管理员群摘要预览"
                 )
             self.start_error = ""
-            logger.info("QQ 群聊摘要 v0.2.3 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。")
+            logger.info("QQ 群聊摘要 v0.2.4 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。")
         except BaseException as exc:
             if self.journal:
                 self.journal.record("初始化失败", error_type=type(exc).__name__)
@@ -113,6 +114,10 @@ class QQGroupDigest(Star):
         try:
             try:
                 result = await Commands(service, notify=reply).run(event.get_message_str())
+                if isinstance(result, Preview):
+                    async with service.lock(result.task.key):
+                        await send_preview(service, event, result)
+                    return
             except DigestError as exc:
                 result = str(exc)
             except Exception as exc:

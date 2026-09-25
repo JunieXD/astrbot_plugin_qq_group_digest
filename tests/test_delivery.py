@@ -26,6 +26,7 @@ class API:
 
     def __init__(self):
         self.sent = []
+        self.private_sent = []
         self.failure_target = None
         self.packet = True
         self.history = []
@@ -47,6 +48,9 @@ class API:
         raise AssertionError(action)
 
     async def transport(self, action, **params):
+        if action.startswith("send_private_"):
+            self.private_sent.append((action, params))
+            return {"message_id": 200 + len(self.private_sent)}
         self.sent.append((action, params))
         if params["group_id"] == self.failure_target:
             raise TimeoutError
@@ -61,6 +65,9 @@ class Router:
         self.api = api
 
     async def resolve(self, task):
+        return self.api
+
+    async def for_event(self, event):
         return self.api
 
 

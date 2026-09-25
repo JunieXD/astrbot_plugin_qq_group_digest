@@ -2,10 +2,13 @@
 
 import importlib.util
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+
+from qq_group_digest.config import MODES
 
 
 @pytest.fixture
@@ -31,6 +34,7 @@ def entrypoint(monkeypatch):
     package.__path__ = [str(Path.cwd())]
     modules["entrypoint_test"] = package
     import qq_group_digest
+    import qq_group_digest.preview
 
     modules["entrypoint_test.qq_group_digest"] = qq_group_digest
     for name, module in list(sys.modules.items()):
@@ -73,6 +77,12 @@ class PrivateEvent:
     def get_message_str(self):
         return self.text
 
+    def get_group_id(self):
+        return ""
+
+    def get_sender_id(self):
+        return "222222222"
+
     def plain_result(self, text):
         return text
 
@@ -102,8 +112,9 @@ async def test_startup_failure_is_sent_after_stopping_event(entrypoint):
 
 
 @pytest.mark.parametrize("fail_model", [False, True])
+@pytest.mark.parametrize("mode", MODES)
 async def test_preview_ack_progress_and_result_survive_stopped_event(
-    entrypoint, store, task, settings, journal, fail_model
+    entrypoint, store, task, settings, journal, fail_model, mode
 ):
     from qq_group_digest.commands import Commands
     from qq_group_digest.config import DigestError
@@ -112,6 +123,8 @@ async def test_preview_ack_progress_and_result_survive_stopped_event(
     from .test_service import make_service
     from .test_summarizer_render import output
 
+    task = replace(task, mode=mode)
+    settings = replace(settings, enabled=False, tasks=(task,))
     service, api = make_service(store, settings, journal)
     entrypoint.service = service
     event = PrivateEvent("/群摘要 预览 " + task.source_group)
@@ -131,8 +144,22 @@ async def test_preview_ack_progress_and_result_survive_stopped_event(
 
     service.client = Client()
     await entrypoint.digest_command(event)
-    assert len(event.sent) == 2
-    assert ("模型暂时不可用" if fail_model else "预览结果") in event.sent[-1]
+    if fail_model:
+        assert len(event.sent) == 2 and "模型暂时不可用" in event.sent[-1]
+        assert not api.private_sent
+    else:
+        assert len(event.sent) == 1 and len(api.private_sent) == 1
+        action, payload = api.private_sent[0]
+        assert payload["user_id"] == event.get_sender_id() and "group_id" not in payload
+        if mode.startswith("合并转发"):
+            assert action == "send_private_forward_msg"
+            assert payload["source"].startswith("✨") and payload["summary"] == "共 1 条 · 点开查看"
+            assert len(payload["messages"]) == (1 if mode.endswith("整篇") else 2)
+        else:
+            assert action == "send_private_msg"
+            assert "截止时间为明天" in payload["message"][0]["data"]["text"]
+        assert await store.call("get", "cursor:" + task.key) is None
+        assert not await store.call("latest", task.key)
     assert not service.previews and not service.commands
     assert not api.sent  # No group publication from a private preview.
     event = PrivateEvent("/群摘要 预览 " + task.source_group)

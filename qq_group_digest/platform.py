@@ -6,7 +6,7 @@ import asyncio
 import random
 import time
 
-from .config import Deferred, DigestError
+from .config import Deferred, DigestError, identifier
 
 
 class Adapter:
@@ -52,7 +52,12 @@ class Adapter:
         if generation is not None and generation != self.generation:
             raise Deferred("读取历史时连接发生变化，将从第一页重新读取。")
         started_generation = self.generation
-        if action in {"send_group_msg", "send_group_forward_msg"}:
+        if action in {
+            "send_group_msg",
+            "send_group_forward_msg",
+            "send_private_msg",
+            "send_private_forward_msg",
+        }:
             await self.ready_to_send()
         if self.account:
             params["self_id"] = self.account
@@ -171,6 +176,27 @@ class Router:
         self.adapters = {}
         self.lock = asyncio.Lock()
 
+    def adapter(self, pid, bot):
+        adapter = self.adapters.get(pid)
+        if adapter is None or adapter.bot is not bot:
+            adapter = self.adapters[pid] = Adapter(pid, bot, self.store, self.settings, self.journal)
+        return adapter
+
+    async def for_event(self, event):
+        """Reply through the requesting account, even when the source uses another bot."""
+        async with self.lock:
+            bot = getattr(event, "bot", None)
+            if not callable(getattr(bot, "call_action", None)):
+                raise DigestError("私聊接入无法调用 OneBot 接口。")
+            account = identifier(event.get_self_id(), "私聊机器人")
+            adapter = self.adapter(str(event.get_platform_id()), bot)
+            await adapter.check_connection()
+            if not adapter.account:
+                await adapter.identity()
+            if adapter.account != account:
+                raise DigestError("私聊机器人身份发生变化，请重新发送命令。")
+            return adapter
+
     async def resolve(self, task):
         async with self.lock:
             manager = self.context.platform_manager
@@ -183,12 +209,7 @@ class Router:
                 if task.bot_qq and isinstance(clients, dict) and task.bot_qq not in map(str, clients):
                     continue
                 pid = str(meta.id)
-                adapter = self.adapters.get(pid)
-                if adapter is None or adapter.bot is not platform.bot:
-                    adapter = self.adapters[pid] = Adapter(
-                        pid, platform.bot, self.store, self.settings, self.journal
-                    )
-                candidates.append(adapter)
+                candidates.append(self.adapter(pid, platform.bot))
             if not candidates:
                 raise Deferred("没有找到可用的 QQ 接入。")
             if len(candidates) != 1:

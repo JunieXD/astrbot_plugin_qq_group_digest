@@ -151,4 +151,4 @@ async def test_refresh_command_requests_full_history(store, task, settings, jour
     await cache.save(api, task, NOW - 87000, NOW, [], NOW)
     api.history = [raw_message(7, NOW - 400), raw_message(1, NOW - 87001)]
     output = await Commands(service).run("群摘要 预览 " + task.source_group + " 刷新")
-    assert "预览结果" in output
+    assert output.digest.items and output.task.source_group == task.source_group
