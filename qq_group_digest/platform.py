@@ -85,6 +85,7 @@ class Adapter:
                 "set", "read-next:" + self.pid, self.clock() + random.uniform(*pace.interval("read"))
             )
             try:
+                started = time.monotonic()
                 result = await self.transport(action, generation=generation, **params)
             except Deferred:
                 raise
@@ -106,6 +107,11 @@ class Adapter:
                     )
                     raise Deferred("QQ 接口暂时不可用，已进入冷却。", pace.failure_cooldown_seconds) from exc
                 raise DigestError(f"{action} 查询失败；请检查 NapCat 状态和群访问权限。") from exc
+            elapsed = time.monotonic() - started
+            # Slow successful reads also reduce pressure; normal fast reads keep the configured pace.
+            if elapsed > max(5, pace.read_max_seconds * 2):
+                await self.store.call("extend", "read-next:" + self.pid, self.clock() + min(30, elapsed / 2))
+            self.journal.record("接口查询完成", api=action, duration_ms=round(elapsed * 1000, 1))
             return result
 
     async def ready_to_read(self):
@@ -151,6 +157,12 @@ class Adapter:
         if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
             raise DigestError("历史接口没有返回有效的消息列表。")
         return data["messages"]
+
+    async def refresh_forward(self, group, native_id):
+        # Native 64-bit identifiers must remain strings (JS Numbers lose precision).
+        page = await self.history_page(group, 1, native_id)
+        if not page:
+            raise DigestError("转发所在的历史消息暂不可用。")
 
 
 class Router:

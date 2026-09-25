@@ -14,7 +14,7 @@ class HistoryCache:
     @staticmethod
     def scope(adapter, task):
         # Names change the collected data. Prompts/providers/forward rendering do not.
-        parts = (1, adapter.pid, adapter.account, task.source_group, task.attribute_speakers)
+        parts = (2, adapter.pid, adapter.account, task.source_group, task.attribute_speakers)
         return hashlib.sha256(json.dumps(parts).encode()).hexdigest()
 
     async def load(self, adapter, task, start, end):

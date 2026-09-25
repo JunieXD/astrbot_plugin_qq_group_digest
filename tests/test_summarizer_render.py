@@ -1,5 +1,4 @@
 import json
-import re
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -14,9 +13,8 @@ from .conftest import NOW
 
 
 def output(sources=("m000001",), title="申请通知", body="截止时间为明天。", prompt=None):
-    batch = {"batch_id": re.search(r"本次校验标识：([a-f0-9]{16})", prompt).group(1)} if prompt else {}
     return json.dumps(
-        {**batch, "items": [{"title": title, "body": body, "sources": list(sources)}]}, ensure_ascii=False
+        {"items": [{"title": title, "body": body, "sources": list(sources)}]}, ensure_ascii=False
     )
 
 
@@ -66,7 +64,7 @@ async def test_generation_uses_durable_model_allowance(store, task, settings, jo
             return SimpleNamespace(role="assistant", completion_text=output(prompt=kwargs["prompt"]))
 
     task = replace(task, provider_id="configured-provider")
-    settings = replace(settings, limits=replace(settings.limits, llm_calls_per_run=1))
+    settings = replace(settings, limits=replace(settings.limits, llm_calls_per_run=1, llm_cache_minutes=0))
     rid = await make_run(store, task)
     context = Context()
     client = LLMClient(context, store, lambda: settings, journal)
@@ -138,24 +136,29 @@ async def test_speaker_provenance_survives_chunking_and_reduction(task, attribut
         reductions = 0
 
         async def generate(self, task, adapter, prompt, **kwargs):
-            merge = "\n请整合下面的候选摘要，合并同主题并保留 sources：\n" in prompt
-            marker = "\n请整合下面的候选摘要，合并同主题并保留 sources：\n" if merge else "\n聊天记录：\n"
-            data = json.loads(prompt.split(marker)[1].split("\n本次校验标识：")[0])
+            from qq_group_digest.transcript import source_id
+
+            merge = kwargs.get("phase") == "reduce"
+            marker = (
+                "\n候选摘要（sources 和 source_speakers 保留原始归属）：\n" if merge else "\n聊天记录：\n"
+            )
+            data = json.loads(prompt.split(marker, 1)[1].split("\n输入结束。")[0])
             assert "222222222" not in prompt and "333333333" not in prompt
             if merge:
                 self.reductions += 1
                 for item in data:
                     if attribute_speakers:
-                        assert item["source_speakers"] == {s: self.extracted[s] for s in item["sources"]}
+                        assert item["source_speakers"] == {
+                            source_id(s): self.extracted[source_id(s)] for s in item["sources"]
+                        }
                     else:
                         assert "source_speakers" not in item
                 sources = list(dict.fromkeys(s for item in data for s in item["sources"]))
             else:
-                for record in data:
-                    assert ("speaker" in record) == attribute_speakers
+                for record in data["messages"]:
                     if attribute_speakers:
-                        self.extracted[record["id"]] = record["speaker"]
-                sources = list(dict.fromkeys(r["id"] for r in data))
+                        self.extracted[source_id(record[0])] = record[2]
+                sources = list(dict.fromkeys(r[0] for r in data["messages"]))
             return output(sources=sources, prompt=prompt, body="群友说法存在分歧，未经核实。")
 
     messages = [
@@ -171,11 +174,8 @@ async def test_speaker_provenance_survives_chunking_and_reduction(task, attribut
     assert result.items and client.reductions >= 1
     if attribute_speakers:
         speakers = client.extracted
-        assert speakers["m000001"]["id"] != speakers["m000002"]["id"]
-        assert speakers["m000001"]["id"] == speakers["m000003"]["id"]
-        assert speakers["m000001"]["name"] == "同名昵称"
-        assert speakers["m000003"]["name"] == "新名片"
-        assert speakers["m000004"]["name"] == ""
+        assert speakers["m000001"] != speakers["m000002"]
+        assert speakers["m000001"] != speakers["m000003"]
 
 
 async def test_empty_window_never_calls_model(task):

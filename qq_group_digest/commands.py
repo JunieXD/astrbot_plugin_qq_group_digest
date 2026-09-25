@@ -1,7 +1,10 @@
 """Private AstrBot-administrator operations, with no implicit group publication."""
 
+import asyncio
 import re
+import time
 from collections import Counter
+from pathlib import Path
 
 from .config import DigestError, Task, identifier
 from .render import full_text
@@ -11,6 +14,10 @@ HELP = """群聊摘要（仅 AstrBot 管理员私聊使用）：
 /群摘要 状态 [来源群号]
 /群摘要 预览 来源群号
 /群摘要 预览 来源群号 刷新
+/群摘要 统计 [来源群号] [天数]
+/群摘要 记录 来源群号
+/群摘要 详情 调用编号
+/群摘要 导出 来源群号 [天数]
 /群摘要 执行 来源群号
 /群摘要 暂停 来源群号
 /群摘要 恢复 来源群号
@@ -51,6 +58,8 @@ class Commands:
         action = parts[0]
         if len(text) > 200 or len(parts) > 3:
             return HELP
+        if action in {"统计", "记录", "详情", "导出"}:
+            return await self.statistics(parts)
         if action == "状态" and len(parts) in (1, 2):
             tasks = (
                 [self.s.settings().find(identifier(parts[1], "来源群"))]
@@ -76,6 +85,10 @@ class Commands:
                         f"获得 {progress['messages']} 条消息（含复用缓存），"
                         f"已用 {elapsed // 60} 分 {elapsed % 60} 秒。"
                     )
+                    if progress.get("chunks"):
+                        result.append(
+                            f"模型分块 {progress.get('chunk', 0)}/{progress['chunks']}，实际调用 {progress.get('calls', 0)} 次。"
+                        )
                 if attention_count:
                     result.append(f"需要处理 {attention_count} 个批次，优先显示最早的未解决记录。")
                 for run in runs:
@@ -143,3 +156,37 @@ class Commands:
                 self.s.journal.record("管理员跳过投递", run=run["id"], target=target)
                 return "已跳过指定批次的生成或尚未完成的投递。"
         return HELP
+
+    async def statistics(self, parts):
+        from .llm_stats import format_call_detail, format_statistics
+
+        statistics = getattr(self.s.client, "statistics", None)
+        if statistics is None:
+            raise DigestError("LLM 统计暂不可用，请检查插件数据目录。")
+        groups = [task.source_group for task in self.s.settings().tasks]
+        if parts[0] == "详情":
+            if len(parts) != 2 or not parts[1].isdigit():
+                return "用法：/群摘要 详情 调用编号"
+            row = await asyncio.to_thread(statistics.detail, int(parts[1]), groups)
+            if row is None:
+                return "没有找到可见的调用记录。"
+            text = format_call_detail([row])
+            if row.get("response_text"):
+                text += "\n模型原始输出：\n" + row["response_text"][:2400]
+            return text
+        if len(parts) >= 2:
+            groups = [self.s.settings().find(identifier(parts[1], "来源群")).source_group]
+        days = 7
+        if len(parts) == 3:
+            if not parts[2].isdigit() or not 1 <= int(parts[2]) <= 3650:
+                raise DigestError("统计天数应为 1～3650。")
+            days = int(parts[2])
+        rows = await asyncio.to_thread(statistics.query, group_ids=groups, since=time.time() - days * 86400)
+        if parts[0] == "导出":
+            if not rows:
+                return "没有可导出的 LLM 调用记录。"
+            directory = Path(statistics.database).parent / "llm_exports"
+            return await asyncio.to_thread(statistics.export_csv, rows, directory)
+        if parts[0] == "记录":
+            return format_call_detail(rows)
+        return format_statistics(rows, days=days, enabled=self.s.settings().llm_statistics["enabled"])

@@ -86,6 +86,9 @@ class Store:
                 scope TEXT PRIMARY KEY, start INTEGER NOT NULL, end INTEGER NOT NULL,
                 captured REAL NOT NULL, expires REAL NOT NULL, messages TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS result_cache (
+                key TEXT PRIMARY KEY, value TEXT NOT NULL, expires REAL NOT NULL
+            );
             PRAGMA user_version=1;
         """)
         with self.db:
@@ -120,6 +123,20 @@ class Store:
     def history_cache_delete(self, scope):
         with self.db:
             self.db.execute("DELETE FROM history_cache WHERE scope=?", (scope,))
+
+    def result_cache_get(self, key, now):
+        row = self.db.execute(
+            "SELECT value FROM result_cache WHERE key=? AND expires>?", (key, now)
+        ).fetchone()
+        return row[0] if row else None
+
+    def result_cache_put(self, key, value, expires, now):
+        with self.db:
+            self.db.execute("DELETE FROM result_cache WHERE expires<=?", (now,))
+            self.db.execute("INSERT OR REPLACE INTO result_cache VALUES (?,?,?)", (key, value, expires))
+            self.db.execute(
+                "DELETE FROM result_cache WHERE key IN (SELECT key FROM result_cache ORDER BY expires DESC LIMIT -1 OFFSET 1000)"
+            )
 
     def set(self, key, value):
         with self.db:
@@ -424,6 +441,7 @@ class Store:
     def cleanup(self, now, snapshot_days, result_days):
         with self.db:
             self.db.execute("DELETE FROM history_cache WHERE expires<=?", (now,))
+            self.db.execute("DELETE FROM result_cache WHERE expires<=?", (now,))
             self.db.execute("DELETE FROM budget WHERE at<?", (now - 86401,))
             self.db.execute(
                 "UPDATE runs SET snapshot=NULL WHERE created<? AND status IN ('complete','failed','generated')",

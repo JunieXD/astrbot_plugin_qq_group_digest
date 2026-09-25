@@ -1,6 +1,6 @@
 [project]
 name = "astrbot-plugin-qq-group-digest"
-version = "0.1.4"
+version = "0.2.0"
 description = "Scheduled LLM digests of QQ group history for AstrBot and NapCat"
 requires-python = ">=3.10"
 dependencies = ["tzdata>=2024.1"]

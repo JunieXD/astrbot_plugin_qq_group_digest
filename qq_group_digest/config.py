@@ -8,6 +8,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .llm_usage import normalize_statistics
+
 
 class DigestError(Exception):
     """A safe, user-facing error. Never put transport exception text here."""
@@ -130,11 +132,15 @@ class Pace:
 
 @dataclass(frozen=True)
 class Limits:
-    page_size: int = 20
+    page_size: int = 100
     max_pages: int = 300
     max_messages: int = 5000
     max_history_chars: int = 300000
-    llm_input_chars: int = 16000
+    llm_input_chars: int = 0
+    llm_context_tokens: int = 0
+    llm_output_tokens: int = 8192
+    llm_overlap_messages: int = 20
+    llm_cache_minutes: int = 60
     history_cache_minutes: int = 30
     llm_calls_per_run: int = 32
     llm_calls_per_day: int = 100
@@ -155,6 +161,7 @@ class Settings:
     tasks: tuple[Task, ...] = ()
     pace: Pace = field(default_factory=Pace)
     limits: Limits = field(default_factory=Limits)
+    llm_statistics: dict = field(default_factory=lambda: normalize_statistics({}))
 
     def find(self, group):
         found = [t for t in self.tasks if t.source_group == group]
@@ -240,7 +247,11 @@ def parse_settings(raw):
         "max_pages": (1, 1000),
         "max_messages": (20, 20000),
         "max_history_chars": (10000, 2000000),
-        "llm_input_chars": (4000, 100000),
+        "llm_input_chars": (0, 2000000),
+        "llm_context_tokens": (0, 2000000),
+        "llm_output_tokens": (1024, 32000),
+        "llm_overlap_messages": (0, 100),
+        "llm_cache_minutes": (0, 1440),
         "history_cache_minutes": (0, 120),
         "llm_calls_per_run": (1, 100),
         "llm_calls_per_day": (1, 2000),
@@ -257,4 +268,14 @@ def parse_settings(raw):
     limits = Limits(**{k: number(lr.get(k, v), k, *ranges[k]) for k, v in asdict(Limits()).items()})
     if limits.snapshot_days > limits.result_days:
         raise DigestError("输入快照的保留时间不能超过摘要保留时间。")
-    return Settings(flag(raw.get("enabled", False), "启用定时摘要"), tuple(parsed), Pace(**pace), limits)
+    if 0 < limits.llm_input_chars < 4000:
+        raise DigestError("模型输入字符上限应为 0（自动）或至少 4000。")
+    if limits.llm_context_tokens and limits.llm_context_tokens < limits.llm_output_tokens + 4000:
+        raise DigestError("模型上下文应为输出预留空间，并至少容纳 4000 tokens 输入。")
+    return Settings(
+        flag(raw.get("enabled", False), "启用定时摘要"),
+        tuple(parsed),
+        Pace(**pace),
+        limits,
+        normalize_statistics(raw.get("llm_statistics")),
+    )

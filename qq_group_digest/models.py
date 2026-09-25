@@ -11,6 +11,7 @@ class Message:
     seq: int = 0
     forward_ids: list[str] = field(default_factory=list)
     sender_name: str = ""
+    reply_ids: list[str] = field(default_factory=list)
 
     def dump(self):
         return asdict(self)

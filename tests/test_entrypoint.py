@@ -151,3 +151,33 @@ async def test_failed_log_close_still_releases_instance_lock(entrypoint):
         await entrypoint.terminate()
     assert closed == [True]
     assert entrypoint.lock is None
+
+
+async def test_authenticated_web_preview_uses_real_service_without_sending(
+    entrypoint, monkeypatch, store, task, settings, journal
+):
+    from .conftest import NOW, raw_message
+    from .test_service import make_service
+    from .test_summarizer_render import output
+
+    web = ModuleType("astrbot.api.web")
+
+    async def body(**kwargs):
+        return {"group_id": task.source_group}
+
+    web.request = SimpleNamespace(username=None, json=body)
+    monkeypatch.setitem(sys.modules, "astrbot.api.web", web)
+    assert (await entrypoint.api_preview())["status"] == "error"
+    service, api = make_service(store, settings, journal)
+    entrypoint.service = service
+    api.history = [raw_message(10, NOW - 1), raw_message(1, NOW - 86401)]
+
+    async def generate(*args, **kwargs):
+        return output()
+
+    service.client = SimpleNamespace(generate=generate)
+    web.request.username = "admin"
+    result = await entrypoint.api_preview()
+    assert result["status"] == "ok" and result["data"]["digest"]["items"]
+    assert result["data"]["payloads"] and not api.sent
+    assert not service.commands and not service.previews

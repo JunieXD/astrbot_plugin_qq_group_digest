@@ -8,6 +8,7 @@ import re
 import time
 
 from .config import IncompleteHistory
+from .forwards import ForwardReader
 from .models import Message
 
 PARTIAL_FORWARD_NOTE = "部分合并转发未完整展开。"
@@ -115,7 +116,15 @@ def normalize(raw, group, *, include_names=False):
         else hashlib.sha256(f"{group}:{mid}:{stamp}:{sender}:{text}".encode()).hexdigest()
     )
     name = display_name(sender_data) if include_names else ""
-    return Message(key, mid, stamp, sender, text, seq, forwards, name)
+    replies = [
+        str(s.get("data", {}).get("id"))
+        for s in segments(raw.get("message", raw.get("raw_message", "")))
+        if isinstance(s, dict)
+        and s.get("type") == "reply"
+        and isinstance(s.get("data"), dict)
+        and s["data"].get("id") is not None
+    ]
+    return Message(key, mid, stamp, sender, text, seq, forwards, name, replies)
 
 
 class HistoryReader:
@@ -125,6 +134,8 @@ class HistoryReader:
 
     async def read(self, adapter, task, start, end, *, progress=None, refresh=False):
         found, cursor, anchors, previous = {}, None, set(), None
+        forwards = ForwardReader(adapter, task, self.limits, self.journal)
+        started = time.monotonic()
         total_chars = 0
         crossed = False
         generation = None
@@ -159,6 +170,9 @@ class HistoryReader:
                     if total_chars > self.limits.max_history_chars:
                         raise IncompleteHistory("本期文字超过读取上限；请增加发送次数或调整高级限制。")
                     found[message.key] = message
+            for message in ordered:
+                if read_start <= message.time < end and message.sender != adapter.account:
+                    await forwards.collect(message, fresh=True)
             if len(found) > self.limits.max_messages:
                 raise IncompleteHistory("本期消息超过读取上限；请增加发送次数或调整高级限制。")
             if progress:
@@ -184,48 +198,19 @@ class HistoryReader:
             # Persist only verified coverage and unexpanded text. Failed enrichment/model
             # calls can reuse it; failed pagination never replaces a complete snapshot.
             await self.cache.save(adapter, task, start, end, messages, captured)
-        notes, expanded, failed, seen_forwards = [], 0, 0, set()
+        notes = []
         if task.read_forwards:
             for message in messages:
-                for fid in message.forward_ids:
-                    if fid in seen_forwards or expanded >= task.forward_limit:
-                        continue
-                    seen_forwards.add(fid)
-                    expanded += 1
-                    before = len(message.text)
-                    try:
-                        result = await adapter.read("get_forward_msg", message_id=fid)
-                        nodes = result.get("messages") if isinstance(result, dict) else None
-                        if not isinstance(nodes, list):
-                            raise ValueError
-                        texts = []
-                        for node in nodes[:100]:
-                            if not isinstance(node, dict):
-                                continue
-                            value = node.get("message", node.get("content", []))
-                            text, _ = flatten(value)
-                            if text:
-                                entry = {"text": text}
-                                if task.attribute_speakers:
-                                    entry["display_name"] = display_name(node.get("sender"))
-                                texts.append(json.dumps(entry, ensure_ascii=False))
-                        message.text += (
-                            "\n[转发内容，发布时间以外层消息为准；以下是独立转发节点，"
-                            "不能归为外层转发者本人说法；节点显示名可自定义，身份未核实]\n" + "\n".join(texts)
-                        )
-                        if len(nodes) > 100:
-                            failed += 1
-                    except Exception as exc:
-                        # Optional enrichment failure never erases the enclosing text.
-                        self.journal.record("转发内容未展开", error_type=type(exc).__name__)
-                        failed += 1
-                    total_chars += len(message.text) - before
-                    if total_chars > self.limits.max_history_chars:
-                        raise IncompleteHistory("展开后的文字超过本期上限，已停止生成。")
-            total = sum(len(m.forward_ids) for m in messages)
-            if failed or total > expanded:
+                await forwards.collect(message)
+                before = len(message.text)
+                forwards.apply(message)
+                total_chars += len(message.text) - before
+                if total_chars > self.limits.max_history_chars:
+                    raise IncompleteHistory("展开后的文字超过本期上限，已停止生成。")
+            total = len({fid for message in messages for fid in message.forward_ids})
+            if forwards.failures or total > forwards.attempts:
                 notes.append(PARTIAL_FORWARD_NOTE)
-        elif any(m.forward_ids for m in messages):
+        elif any(message.forward_ids for message in messages):
             notes.append(SKIPPED_FORWARD_NOTE)
         if any(
             any(label in m.text for label in ("图片未识别", "语音未转写", "视频未解析")) for m in messages
@@ -237,6 +222,9 @@ class HistoryReader:
             start=start,
             end=end,
             messages=len(messages),
-            forwards=expanded,
+            forwards=forwards.attempts,
+            forward_cache_hits=forwards.hits,
+            pages=page_number,
+            duration_ms=round((time.monotonic() - started) * 1000, 1),
         )
         return messages, notes

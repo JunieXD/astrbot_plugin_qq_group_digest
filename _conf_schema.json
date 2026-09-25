@@ -233,8 +233,8 @@
       "page_size": {
         "description": "每页读取多少条消息",
         "type": "int",
-        "default": 20,
-        "hint": "默认 20；5～100。越大，NapCat 单次处理负担越重。"
+        "default": 100,
+        "hint": "5～100，默认 100；增大可减少翻页请求。"
       },
       "max_pages": {
         "description": "每期最多读取多少页",
@@ -255,10 +255,10 @@
         "hint": "包含展开转发的文字，超过则暂停。"
       },
       "llm_input_chars": {
-        "description": "单次模型输入最多多少字",
+        "description": "模型输入字符上限（0 自动）",
         "type": "int",
-        "default": 16000,
-        "hint": "含提示词和正文；按字符控制，不是精确 token 数。可根据模型上下文大小调整。"
+        "default": 0,
+        "hint": "0 优先整段输入并按模型上下文限制；手动可设 4000～2000000。ECNU Max/Plus 自动识别，其余模型默认按 32000 tokens 保守预算。"
       },
       "history_cache_minutes": {
         "description": "历史查询缓存可复用几分钟",
@@ -330,6 +330,139 @@
         "type": "int",
         "default": 7,
         "hint": "默认 7 个旧文件，另加当前文件。达到大小后轮转，不按日期删除。"
+      },
+      "llm_context_tokens": {
+        "description": "模型上下文大小（0 自动识别）",
+        "type": "int",
+        "default": 0,
+        "hint": "ECNU Max 512000、Plus 256000。其他模型可填官方上下文大小；会为输出留空间。"
+      },
+      "llm_output_tokens": {
+        "description": "模型输出最多多少 tokens",
+        "type": "int",
+        "default": 8192,
+        "hint": "1024～32000，默认 8192；同时仍遵守每群摘要字数限制。"
+      },
+      "llm_overlap_messages": {
+        "description": "分块时补充几条上下文",
+        "type": "int",
+        "default": 20,
+        "hint": "只有整段超过输入预算时才分块；优先补充被回复的消息。0～100。"
+      },
+      "llm_cache_minutes": {
+        "description": "成功分块结果保留几分钟",
+        "type": "int",
+        "default": 60,
+        "hint": "0 关闭，最多 1440；输入、提示词和模型一致才复用，失败重试可继续。更改提示词会重新生成。"
+      }
+    }
+  },
+  "llm_statistics": {
+    "description": "LLM 调用记录与费用统计",
+    "type": "object",
+    "hint": "仅记录本插件的模型调用。缺失用量显示未知；费用为估算，不包含不可见的内部网络重试。",
+    "items": {
+      "enabled": {
+        "description": "记录 LLM 调用统计",
+        "type": "bool",
+        "default": true
+      },
+      "store_content": {
+        "description": "保存输入提示词与最终输出正文",
+        "type": "bool",
+        "default": false,
+        "hint": "默认仅记录 token、耗时、状态及提示词哈希。不保存思考正文。关闭后不删除此前保存的内容。"
+      },
+      "content_max_chars": {
+        "description": "每个正文字段最多保存字符数",
+        "type": "int",
+        "default": 20000,
+        "hint": "范围 256–200000；截断会标记，不影响实际模型输入。"
+      },
+      "retention_days": {
+        "description": "调用记录保留天数",
+        "type": "int",
+        "default": 90,
+        "hint": "0 表示永久保留，最多 3650 天。启动及有新调用时定期清理过期记录；不影响加群审计历史。"
+      },
+      "prices": {
+        "description": "模型单价（每百万 token）",
+        "type": "template_list",
+        "default": [],
+        "hint": "未配置价格时费用未知。指定 Provider 优先。支持 CNY、USD 和额度 CREDITS，分别汇总。缓存缺失但输入/输出总量已知时显示费用区间。",
+        "templates": {
+          "model_price": {
+            "name": "模型计费价格",
+            "display_item": "model",
+            "items": {
+              "provider_id": {
+                "description": "Provider ID（留空适用所有同名模型）",
+                "type": "string",
+                "default": ""
+              },
+              "model": {
+                "description": "计费模型名称（精确匹配）",
+                "type": "string",
+                "default": ""
+              },
+              "currency": {
+                "description": "计费单位（CNY / USD / CREDITS 等）",
+                "type": "string",
+                "default": "CNY"
+              },
+              "cached_input_per_million": {
+                "description": "缓存命中输入单价",
+                "type": "string",
+                "default": "",
+                "hint": "每百万 token 价格；空白为未知，0 表示免费。"
+              },
+              "uncached_input_per_million": {
+                "description": "缓存未命中输入单价",
+                "type": "string",
+                "default": "",
+                "hint": "每百万 token 价格；空白为未知，0 表示免费。"
+              },
+              "output_per_million": {
+                "description": "输出单价",
+                "type": "string",
+                "default": "",
+                "hint": "输出通常已包含思考 token，不重复计费。"
+              },
+              "schedule": {
+                "description": "计费时段",
+                "type": "string",
+                "default": "flat",
+                "options": [
+                  "flat",
+                  "ecnu_peak"
+                ],
+                "hint": "flat 为固定价格；ecnu_peak 填谷时单价，按请求开始的北京时间，周一至周五 08:00–23:00 乘 2。价格与倍率随调用保存。"
+              },
+              "match_model": {
+                "description": "价格匹配模型名来源",
+                "type": "string",
+                "default": "response",
+                "options": [
+                  "response",
+                  "configured"
+                ],
+                "hint": "response 按返回的实际模型名（缺失时用配置名）；configured 按调用开始时配置的模型名。ECNU 按对外服务名 ecnu-plus/ecnu-max 计费，请选择 configured。"
+              }
+            }
+          }
+        }
+      },
+      "store_response": {
+        "description": "单独保存模型最终输出",
+        "type": "bool",
+        "default": true,
+        "hint": "无需保存输入提示词即可记录输出 JSON；不保存思考正文。store_content 开启时也会保存输出。"
+      },
+      "store_usage": {
+        "description": "保存精简的原始 usage 字段",
+        "type": "bool",
+        "default": true,
+        "hint": "仅保留白名单 token 计数，用于排查缓存缺失；不包含请求头、密钥和模型正文。"
       }
     }
   }

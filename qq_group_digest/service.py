@@ -159,6 +159,9 @@ class Service:
                 if self.clock() - self.last_cleanup >= 3600:
                     limits = self.settings().limits
                     await self.store.call("cleanup", self.clock(), limits.snapshot_days, limits.result_days)
+                    statistics = getattr(self.client, "statistics", None)
+                    if statistics:
+                        statistics.maintenance()
                     self.last_cleanup = self.clock()
             except Exception as exc:
                 self.journal.record("调度异常", error_type=type(exc).__name__)
@@ -284,16 +287,21 @@ class Service:
                     adapter, task, start, end, progress=reading, refresh=refresh
                 )
                 progress["phase"] = "模型生成中"
-                digest = await Summarizer(self.client, self.settings().limits).summarize(
-                    task, adapter, messages, start, end, notes
-                )
+                digest = await Summarizer(
+                    self.client, self.settings().limits, progress=lambda **fields: progress.update(fields)
+                ).summarize(task, adapter, messages, start, end, notes)
                 self.journal.record("私聊预览完成", group=task.source_group, topics=len(digest.items))
                 return digest, start, end
             except asyncio.CancelledError:
                 self.journal.record("私聊预览取消", group=task.source_group)
                 raise
             except Exception as exc:
-                self.journal.record("私聊预览失败", group=task.source_group, error_type=type(exc).__name__)
+                self.journal.record(
+                    "私聊预览失败",
+                    group=task.source_group,
+                    error_type=type(exc).__name__,
+                    reason=str(exc) if isinstance(exc, DigestError) else "处理异常",
+                )
                 raise
             finally:
                 self.previews.pop(task.key, None)
