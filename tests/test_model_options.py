@@ -173,10 +173,10 @@ def test_structured_output_is_isolated_bounded_and_can_use_plain_json(task):
     schema = options["response_format"]["json_schema"]["schema"]
     item = schema["properties"]["items"]["items"]
     assert schema["required"] == ["items"] and not schema["additionalProperties"]
-    assert set(item["required"]) == {"subject", "title", "body", "sources"}
+    assert set(item["required"]) == {"title", "body"}
+    assert set(item["properties"]) == {"title", "body"}
     assert not item["additionalProperties"]
     assert item["properties"]["body"]["type"] == "array"
-    assert item["properties"]["sources"]["items"]["pattern"] == "^u[1-9][0-9]*$"
     item["required"].clear()
     assert DIGEST_RESPONSE_FORMAT == original_format and provider.provider_config == before
     generation = parse_settings({"llm_generation": {"ecnu_structured_output": False}}).llm_generation

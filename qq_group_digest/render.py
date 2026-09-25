@@ -74,11 +74,21 @@ def readable_body(text):
     return "\n\n".join("• " + paragraph for paragraph in paragraphs)
 
 
+def item_heading(index, item):
+    title = re.sub(r"\s+", " ", display_text(item.title)).strip()
+    return f"{index + 1:02d} · {title}"
+
+
+def contents(task, digest):
+    # Use the final selected titles, not another model-generated summary:
+    # numbering, qualifiers and ordering must agree with the following nodes.
+    title = task.content_title or default_title(task)
+    entries = "\n".join(item_heading(i, item) for i, item in enumerate(digest.items))
+    return f"{title}\n\n省流目录\n{entries}"
+
+
 def bodies(digest):
-    return [
-        f"{i + 1:02d} · {display_text(item.title)}\n\n{readable_body(item.body)}"
-        for i, item in enumerate(digest.items)
-    ]
+    return [f"{item_heading(i, item)}\n\n{readable_body(item.body)}" for i, item in enumerate(digest.items)]
 
 
 def full_text(task, digest, start, end):
@@ -123,7 +133,7 @@ def make_payloads(task, digest, start, end, account, limits, mode=None):
     if mode == "合并转发·整篇":
         texts = [complete]
     else:
-        texts = [title, *bodies(digest)]
+        texts = [contents(task, digest), *bodies(digest)]
     if len(texts) > 24 or any(len(t) > 16000 for t in texts):
         raise DigestError("转发内容过长，请减少摘要长度。")
     return [

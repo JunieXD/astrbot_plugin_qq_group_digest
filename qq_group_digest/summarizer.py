@@ -48,20 +48,14 @@ class Summarizer:
         if prior != "[]":
             instructions += f"上期内容供去重：{prior}\n仅收录新增信息或进展。\n"
         if task.attribute_speakers:
-            instructions += "署名开启：群友说法使用群友{{u代号}}，程序填入真实昵称。\n"
+            instructions += "署名开启：群友说法使用群友u代号，程序填入真实昵称。\n"
         else:
             instructions += "无需引用昵称或成员代号，直接写群友反馈、转发信息等；不要输出署名占位符。\n"
         footer = (
-            "\n输入结束。扫描整个时间窗口，结合当期话题选取对目标读者有知识或实用增量的本期信息，"
-            "按价值排序，不给某类话题固定排名；"
-            "逐要点剔除孤立报喜/履历、空泛评价、无答案提问，不用自创建议包装闲聊，不凑数。"
-            "去掉个人去向和成绩履历后，若只剩评价或成功原因猜测，就舍弃该条。"
-            "核对每点的对象、来源、数字口径与时效，不混淆不同对象或经历；"
-            "有用传闻保留署名、分歧、限定及原始链接。不输出选材理由或免责声明。输出 items JSON，标题正文目标 "
-            + str(int(task.summary_chars * 0.8))
-            + " 字。"
-            + ("正文署名用群友{{u代号}}。" if task.attribute_speakers else "正文不署名。")
-            + "sources 只列 u 发言者代号，不能填数字消息编号。"
+            "\n输入结束。按价值选取本期信息，不凑数。标题用于省流目录，写清对象与关键增量；"
+            "正文简短，保留必要限定和链接。"
+            f"输出 items JSON，标题正文目标 {int(task.summary_chars * 0.8)} 字。"
+            + ("群友署名用u代号。" if task.attribute_speakers else "正文不署名。")
         )
         merge_marker = "候选摘要（sources 和 source_speakers 保留原始归属）："
         if hasattr(self.client, "budget"):
@@ -202,8 +196,8 @@ class Summarizer:
         seen = set()
         result = []
         for item in resolve_names(candidates, transcript.sources, task.attribute_speakers):
-            if not set(item.sources) <= known or not any(
-                transcript.sources[s].time >= start for s in item.sources
+            if not set(item.sources) <= known or (
+                item.sources and not any(transcript.sources[s].time >= start for s in item.sources)
             ):
                 continue
             key = fingerprint(item)

@@ -283,8 +283,13 @@ class UsageStore:
     ) -> list[dict]:
         if not group_ids:
             return []
-        clauses = [f"group_id IN ({','.join('?' for _ in group_ids)})", "started_at>=?", "started_at<=?"]
-        params: list = [*group_ids, since, time.time() if until is None else until]
+        clauses = [f"group_id IN ({','.join('?' for _ in group_ids)})", "started_at>=?"]
+        params: list = [*group_ids, since]
+        # An unbounded query means all recorded rows. A small wall-clock rollback
+        # must not temporarily hide the just-completed requests from statistics.
+        if until is not None:
+            clauses.append("started_at<=?")
+            params.append(until)
         if model is not None:
             clauses.append("model=?")
             params.append(model)

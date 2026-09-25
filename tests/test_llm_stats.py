@@ -96,6 +96,17 @@ def test_crash_and_cancel_remain_unknown_and_do_not_synthesize_latency(tmp_path)
     store.close()
 
 
+def test_default_statistics_query_survives_small_clock_rollback(tmp_path, monkeypatch):
+    now = time.time()
+    store = UsageStore(tmp_path / "clock.db", store_config())
+    monkeypatch.setattr("qq_group_digest.llm_stats.time.time", lambda: now + 1)
+    begin(store)
+    monkeypatch.setattr("qq_group_digest.llm_stats.time.time", lambda: now)
+    assert len(store.query(group_ids=["123"])) == 1
+    assert store.query(group_ids=["123"], until=now) == []
+    store.close()
+
+
 def test_store_content_is_bounded_without_altering_hashes():
     store = UsageStore(":memory:", store_config(store_content=True, content_max_chars=256))
     call_id = begin(store, prompt="x" * 400)

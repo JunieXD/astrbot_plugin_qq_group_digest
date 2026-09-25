@@ -34,9 +34,9 @@ def parse_digest(text, known, task, batch_id=None, *, enforce_budget=True):
         raise OutputError("receipt", "本次输入校验标识不匹配。")
     items = []
     for index, raw in enumerate(data["items"], 1):
-        fields = {"title", "body", "sources"}
-        if not isinstance(raw, dict) or set(raw) not in (fields, fields | {"subject"}):
-            raise OutputError("item_structure", f"第 {index} 条应为 subject、title、body、sources。")
+        fields = {"title", "body"}
+        if not isinstance(raw, dict) or not fields <= set(raw) or set(raw) - fields - {"subject", "sources"}:
+            raise OutputError("item_structure", f"第 {index} 条应包含 title 和 body。")
         if not isinstance(raw["title"], str):
             raise OutputError("text_type", f"第 {index} 条标题必须为文字。")
         title = clean_text(raw["title"])
@@ -53,12 +53,19 @@ def parse_digest(text, known, task, batch_id=None, *, enforce_budget=True):
             not isinstance(p, str) or not clean_text(p) for p in paragraphs
         ):
             raise OutputError("text_type", f"第 {index} 条正文应为 1～8 个非空文字要点。")
-        body = "\n".join(clean_text(p) for p in paragraphs)
-        sources = raw["sources"]
+        # Drop isolated schema debris locally instead of asking the model to
+        # regenerate an otherwise usable digest. Actual explanatory prose stays.
+        body = "\n".join(
+            line
+            for p in paragraphs
+            for line in clean_text(p).splitlines()
+            if line.strip().strip("\"'`").lower() not in {"sources", "subject", "title", "body", "items"}
+        )
+        sources = raw.get("sources", [])
         if not title or not body:
             raise OutputError("empty_item", f"第 {index} 条标题或正文为空。")
-        if not isinstance(sources, list) or not 1 <= len(sources) <= 100:
-            raise OutputError("sources", f"第 {index} 条应有 1～100 个来源编号。")
+        if not isinstance(sources, list) or len(sources) > 100:
+            raise OutputError("sources", f"第 {index} 条旧格式 sources 应为最多100项的列表。")
         normalized = [source_id(s) for s in sources]
         normalized += references(title + "\n" + body)
         if "{{" in REFERENCE.sub("", title + body) or "}}" in REFERENCE.sub("", title + body):

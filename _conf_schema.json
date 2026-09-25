@@ -173,7 +173,7 @@
         "description": "ECNU 结构化输出",
         "type": "bool",
         "default": true,
-        "hint": "推荐开启。使用官方 JSON Schema 约束摘要字段、分点正文和来源代号格式，减少格式错误；仍会本地校验来源和长度。关闭时使用普通 JSON 模式。仅对 ecnu-max / ecnu-plus 生效。"
+        "hint": "推荐开启。使用官方 JSON Schema 约束短标题和分点正文，减少格式错误；不要求额外输出来源编号。关闭时使用普通 JSON 模式。仅对 ecnu-max / ecnu-plus 生效。"
       },
       "ecnu_thinking": {
         "description": "ECNU 思考模式",

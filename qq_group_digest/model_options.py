@@ -18,7 +18,6 @@ DIGEST_RESPONSE_FORMAT = {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "subject": {"type": "string"},
                             "title": {"type": "string"},
                             "body": {
                                 "type": "array",
@@ -26,14 +25,8 @@ DIGEST_RESPONSE_FORMAT = {
                                 "minItems": 1,
                                 "maxItems": 8,
                             },
-                            "sources": {
-                                "type": "array",
-                                "items": {"type": "string", "pattern": "^u[1-9][0-9]*$"},
-                                "minItems": 1,
-                                "maxItems": 20,
-                            },
                         },
-                        "required": ["subject", "title", "body", "sources"],
+                        "required": ["title", "body"],
                         "additionalProperties": False,
                     },
                 }

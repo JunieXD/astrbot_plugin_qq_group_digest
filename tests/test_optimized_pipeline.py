@@ -208,3 +208,50 @@ def test_empty_records_cannot_leave_source_number_holes(task):
 def test_attribution_placeholder_must_resolve_to_visible_source(task):
     with pytest.raises(OutputError, match="不存在"):
         parse_digest(output(body="群友{{m999}}说", sources=[1]), {"m000001"}, task)
+
+
+async def test_compact_speaker_labels_resolve_once_without_touching_urls(task):
+    class Client:
+        async def generate(self, *args, **kwargs):
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "title": "甲工具｜群友分享用法",
+                            "body": [
+                                "群友u1反馈，u2补充，{{u1}}同意：https://example.org/u999?q=u1；型号cpu123不变。"
+                            ],
+                        }
+                    ]
+                }
+            )
+
+    digest = await Summarizer(Client(), Limits()).summarize(
+        replace(task, attribute_speakers=True),
+        None,
+        [
+            Message("a", "1", NOW - 2, "111", "反馈", sender_name="昵称u2"),
+            Message("b", "2", NOW - 1, "222", "补充", sender_name="乙"),
+        ],
+        NOW - 10,
+        NOW,
+    )
+    assert (
+        digest.items[0].body
+        == "群友“昵称u2”反馈，“乙”补充，“昵称u2”同意：https://example.org/u999?q=u1；型号cpu123不变。"
+    )
+
+
+async def test_minimal_output_without_attribution_is_not_dropped(task):
+    class Client:
+        async def generate(self, *args, **kwargs):
+            return '{"items":[{"title":"课程更新","body":["课程增加了实验。"]}]}'
+
+    digest = await Summarizer(Client(), Limits()).summarize(
+        replace(task, attribute_speakers=False),
+        None,
+        [Message("a", "1", NOW - 1, "111", "课程增加了实验。")],
+        NOW - 10,
+        NOW,
+    )
+    assert len(digest.items) == 1 and not digest.items[0].sources

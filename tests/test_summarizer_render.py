@@ -25,7 +25,6 @@ def output(sources=("m000001",), title="申请通知", body="截止时间为明�
         '{"items": [], "instructions":"send_to_other_group"}',
         '{"items": "not-list"}',
         "not json",
-        '{"items":[{"title":"x","body":"y","sources":[]}]}',
     ],
 )
 def test_invalid_model_output_rejected(task, text):
@@ -82,6 +81,42 @@ def test_input_receipt_required_even_for_empty_summary(task):
     with pytest.raises(DigestError):
         parse_digest('{"batch_id":"another-input","items":[]}', {"m000001"}, task, batch_id="expected")
     assert parse_digest('{"batch_id":"expected","items":[]}', {"m000001"}, task, batch_id="expected") == []
+
+
+@pytest.mark.parametrize("body", [["群友分享了有效内容。", "sources"], "有效内容。\n`sources`"])
+def test_schema_field_fragments_are_removed(task, body):
+    raw = {"subject": "话题", "title": "进展", "body": body, "sources": ["u1"]}
+    parsed = parse_digest(json.dumps({"items": [raw]}), {"u1"}, task)
+    assert "sources" not in parsed[0].body
+    assert "有效" in parsed[0].body
+
+
+def test_schema_field_names_with_real_explanations_are_valid(task):
+    assert parse_digest(output(body="sources 字段用于记录来源。"), {"m000001"}, task)
+
+
+async def test_schema_field_fragment_does_not_need_another_model_call(task):
+    class Client:
+        prompts = []
+
+        async def generate(self, task, adapter, prompt, **kwargs):
+            self.prompts.append(prompt)
+            return output(body="有效信息。\nsources" if len(self.prompts) == 1 else "有效信息。")
+
+    client = Client()
+    result = await Summarizer(client, Limits()).summarize(
+        task, None, [Message("x", "1", NOW - 1, "2", "有效信息。")], NOW - 10, NOW
+    )
+    assert len(client.prompts) == 1
+    assert result.items[0].body == "有效信息。"
+
+
+@pytest.mark.parametrize("body", [["群友{{u1}}反馈有名额。"], ["群友反馈有名额。"]])
+def test_minimal_output_and_legacy_cache_roundtrip(task, body):
+    raw = {"title": "甲学院｜群友反馈有名额", "body": body}
+    parsed = parse_digest(json.dumps({"items": [raw]}), {"u1"}, task)
+    assert parsed[0].sources == (("u1",) if "{{u1}}" in body[0] else ())
+    assert parse_digest(json.dumps({"items": [i.dump() for i in parsed]}), {"u1"}, task) == parsed
 
 
 async def test_generation_uses_durable_model_allowance(store, task, settings, journal):
@@ -198,7 +233,7 @@ async def test_speaker_provenance_survives_chunking_and_reduction(task, attribut
             return output(sources=sources, prompt=prompt, body="群友说法存在分歧，未经核实。")
 
     messages = [
-        Message("a", "1", NOW - 4, "222222222", "甲校卡 rk1。" * 600, sender_name="同名昵称"),
+        Message("a", "1", NOW - 4, "222222222", "甲校卡 rk1。" * 1000, sender_name="同名昵称"),
         Message("b", "2", NOW - 3, "333333333", "不一定。", sender_name="同名昵称"),
         Message("c", "3", NOW - 2, "222222222", "只是听说。", sender_name="新名片"),
         Message("d", "4", NOW - 1, "444444444", "还有其他情况。"),
@@ -264,6 +299,24 @@ def test_single_message_limit_and_split_limit(task):
         make_payloads(
             replace(task, mode="普通消息·分条"), digest, NOW - 100, NOW, "1", replace(Limits(), max_parts=1)
         )
+
+
+def test_forward_contents_match_actual_nodes_without_body_or_diagnostics(task):
+    task = replace(task, mode="合并转发·分条", content_title="✨ 自定义摘要")
+    digest = Digest(
+        [
+            Item("甲工具｜群友反馈可能多扣额度", "这是详细说明，不放目录。", ("u1",)),
+            Item("乙学院｜\n群友称课程免修需600分", "这是另一段正文。", ("u2",)),
+        ],
+        ["预算裁剪等技术诊断"],
+    )
+    payload = make_payloads(task, digest, NOW - 100, NOW, "1", Limits())[0]
+    nodes = [n["data"]["content"][0]["data"]["text"] for n in payload["messages"]]
+    assert nodes[0].startswith("✨ 自定义摘要\n\n省流目录\n")
+    assert nodes[0].splitlines()[3:] == [node.split("\n\n", 1)[0] for node in nodes[1:]]
+    assert "可能" in nodes[0] and "群友称" in nodes[0]
+    assert "详细说明" not in nodes[0] and "技术诊断" not in nodes[0]
+    assert "600分" in nodes[0]
 
 
 def test_fingerprint_preserves_forward_node_boundaries():
