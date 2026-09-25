@@ -42,7 +42,7 @@ class Summarizer:
         per_item = max(8, task.summary_chars // task.max_topics)
         instructions = (
             f"关注内容：{task.focus}\n本期：{period_text(task, start, end)}（{task.timezone}）。\n"
-            f"最多 {task.max_topics} 个主题；通常每条标题和正文合计约 {max(30, int(per_item * 0.75))} 字。"
+            f"最多 {task.max_topics} 个主题，无最低数量，不凑数；通常每条标题和正文合计约 {max(30, int(per_item * 0.75))} 字。"
             f"全部标题正文目标不超过 {int(task.summary_chars * 0.8)} 字，硬上限 {task.summary_chars} 字。\n"
         )
         if prior != "[]":
@@ -52,9 +52,10 @@ class Summarizer:
         else:
             instructions += "无需引用昵称或成员代号，直接写群友反馈、转发信息等；不要输出署名占位符。\n"
         footer = (
-            "\n输入结束。扫描整个时间窗口，按价值排序，只收录本期新增信息。每条明确具体学校/事项和进展；"
-            "结合明确回复与同一人的上下文概述，不逐句摘抄，不猜对象，不混淆学校或经历。"
-            "保留分歧、限定及原始链接，不附免责声明。输出 items JSON，标题正文目标 "
+            "\n输入结束。扫描整个时间窗口，只选对目标读者有具体用途的本期新增信息，按价值排序；"
+            "逐要点剔除孤立报喜/履历、空泛评价、无答案提问，不用自创建议包装闲聊，不凑数。"
+            "核对每点的对象、来源、数字口径与时效，不混淆学校或经历；"
+            "有用传闻保留署名、分歧、限定及原始链接。不输出选材理由或免责声明。输出 items JSON，标题正文目标 "
             + str(int(task.summary_chars * 0.8))
             + " 字。"
             + ("正文署名用群友{{u代号}}。" if task.attribute_speakers else "正文不署名。")
