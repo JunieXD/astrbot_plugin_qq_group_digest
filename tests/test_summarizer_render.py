@@ -312,7 +312,7 @@ def test_forward_contents_match_actual_nodes_without_body_or_diagnostics(task):
     )
     payload = make_payloads(task, digest, NOW - 100, NOW, "1", Limits())[0]
     nodes = [n["data"]["content"][0]["data"]["text"] for n in payload["messages"]]
-    assert nodes[0].startswith("✨ 自定义摘要\n\n省流目录\n")
+    assert nodes[0].startswith("✨ 自定义摘要\n\n目录\n")
     assert nodes[0].splitlines()[3:] == [node.split("\n\n", 1)[0] for node in nodes[1:]]
     assert "可能" in nodes[0] and "群友称" in nodes[0]
     assert "详细说明" not in nodes[0] and "技术诊断" not in nodes[0]

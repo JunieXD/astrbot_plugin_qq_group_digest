@@ -84,7 +84,7 @@ def contents(task, digest):
     # numbering, qualifiers and ordering must agree with the following nodes.
     title = task.content_title or default_title(task)
     entries = "\n".join(item_heading(i, item) for i, item in enumerate(digest.items))
-    return f"{title}\n\n省流目录\n{entries}"
+    return f"{title}\n\n目录\n{entries}"
 
 
 def bodies(digest):
