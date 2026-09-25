@@ -119,7 +119,7 @@ class QQGroupDigest(Star):
                 result = await Commands(service, notify=reply).run(event.get_message_str())
                 if isinstance(result, Preview):
                     async with service.lock(result.task.key):
-                        await send_preview(service, event, result)
+                        await send_preview(service, event, result, notify=reply)
                     return
             except DigestError as exc:
                 result = str(exc)

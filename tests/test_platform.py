@@ -193,3 +193,59 @@ async def test_explicit_account_not_blocked_by_unrelated_offline_adapter(store, 
     router = Router(context, store, lambda: settings, journal)
     adapter = await router.resolve(replace(task, bot_qq="111111111"))
     assert adapter.bot is online
+
+
+async def test_reload_preserves_connection_cooldown_without_extending_it(store, settings, journal):
+    from dataclasses import replace
+
+    settings = replace(
+        settings, pace=replace(settings.pace, recovery_min_seconds=60, recovery_max_seconds=60)
+    )
+    bot = Bot()
+    first = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    await first.check_connection()
+    second = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW + 30)
+    with pytest.raises(Deferred) as pending:
+        await second.ready_to_send()
+    assert pending.value.seconds == 30
+    third = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW + 61)
+    await third.ready_to_send()
+    assert third.generation == 1
+    bot._wsr_api_clients["111111111"] = object()
+    fourth = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW + 62)
+    with pytest.raises(Deferred) as pending:
+        await fourth.ready_to_send()
+    assert pending.value.seconds == 60
+
+
+async def test_observed_disconnect_restarts_protection_even_with_same_client(store, settings, journal):
+    from dataclasses import replace
+
+    settings = replace(
+        settings, pace=replace(settings.pace, recovery_min_seconds=60, recovery_max_seconds=60)
+    )
+    bot = Bot()
+    clients = bot._wsr_api_clients
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    await adapter.check_connection()
+    adapter.clock = lambda: NOW + 61
+    bot._wsr_api_clients = {}
+    with pytest.raises(Deferred, match="尚未连接"):
+        await adapter.check_connection()
+    bot._wsr_api_clients = clients
+    with pytest.raises(Deferred) as pending:
+        await adapter.ready_to_send()
+    assert pending.value.seconds == 60
+
+
+async def test_connection_cache_ignores_dynamic_api_attributes(store, settings, journal):
+    class DynamicBot(Bot):
+        def __getattr__(self, name):
+            return lambda **params: self.call_action(name, **params)
+
+    bot = DynamicBot()
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    await adapter.ready_to_send()
+    recreated = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    await recreated.ready_to_send()
+    assert recreated._observed is adapter._observed

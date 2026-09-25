@@ -9,6 +9,10 @@ import time
 from .config import Deferred, DigestError, identifier
 
 
+class RecoveryPending(Deferred):
+    """A known send cooldown; no platform write has been attempted."""
+
+
 class Adapter:
     def __init__(self, pid, bot, store, settings, journal, *, clock=time.time, sleep=asyncio.sleep):
         self.pid, self.bot = str(pid), bot
@@ -19,6 +23,14 @@ class Adapter:
         self._connections = None
         self._objects = ()
         self.generation = 0
+        # The OneBot client outlives a plugin reload. Keep only connection objects
+        # here, never old adapters, stores or callbacks; retain references to
+        # prevent object-id reuse from hiding a genuine reconnect.
+        attribute = "_qq_group_digest_connections_v1"
+        self._observed = getattr(bot, attribute, None)
+        if not isinstance(self._observed, dict):
+            self._observed = {}
+            setattr(bot, attribute, self._observed)
 
     async def check_connection(self):
         clients = getattr(self.bot, "_wsr_api_clients", None)
@@ -26,6 +38,9 @@ class Adapter:
             if len(clients) > 1:
                 raise DigestError("同一接入连接了多个 QQ，请为每个 QQ 使用独立的 AstrBot 接入。")
             if not clients:
+                self._connections = ()
+                self._objects = ()
+                self._observed.pop(self.pid, None)
                 raise Deferred("NapCat 尚未连接，等待连接恢复。")
             current = tuple(sorted((str(k), id(v)) for k, v in clients.items()))
             account = current[0][0]
@@ -33,10 +48,20 @@ class Adapter:
                 raise DigestError("这个接入的机器人 QQ 已改变，请检查绑定并重载插件。")
             self.account = account
             if current != self._connections:
+                previous = self._observed.get(self.pid)
                 self._connections = current
                 self._objects = tuple(clients.values())
                 self.generation += 1
-                await self.cooldown(random.uniform(*self.settings().pace.interval("recovery")))
+                if previous is None or previous[0] != current:
+                    seconds = random.uniform(*self.settings().pace.interval("recovery"))
+                    await self.cooldown(seconds)
+                    self.journal.record(
+                        "连接保护等待",
+                        platform=self.pid,
+                        reason="连接变化" if previous else "首次识别连接",
+                        seconds=round(seconds, 1),
+                    )
+                self._observed[self.pid] = (current, self._objects)
 
     async def cooldown(self, seconds):
         return await self.store.call("extend", "recovery:" + self.pid, self.clock() + seconds)
@@ -45,7 +70,7 @@ class Adapter:
         await self.check_connection()
         until = await self.store.call("get", "recovery:" + self.pid, 0)
         if until > self.clock():
-            raise Deferred("连接恢复后的等待尚未结束。", until - self.clock())
+            raise RecoveryPending("连接初始化或恢复后的发送保护等待尚未结束。", until - self.clock())
 
     async def transport(self, action, *, generation=None, **params):
         await self.check_connection()

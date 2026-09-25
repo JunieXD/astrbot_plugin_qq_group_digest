@@ -110,3 +110,91 @@ async def test_sender_rejects_non_private_or_unprivileged_context(admin, group):
     event = SimpleNamespace(is_admin=lambda: admin, get_group_id=lambda: group)
     with pytest.raises(DigestError, match="管理员私聊"):
         await send_preview(None, event, None)
+
+
+@pytest.mark.parametrize("reconnect_in_queue", [False, True])
+async def test_preview_waits_for_real_adapter_recovery_and_sends_once(
+    store, task, settings, journal, reconnect_in_queue
+):
+    import sqlite3
+
+    from qq_group_digest.platform import Adapter
+
+    from .test_platform import Bot
+
+    settings = replace(
+        settings, pace=replace(settings.pace, recovery_min_seconds=60, recovery_max_seconds=60)
+    )
+    service, _ = make_service(store, settings, journal)
+    bot = Bot()
+    bot.result = {"message_id": 101}
+    now = [NOW]
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: now[0])
+    service.router.api = adapter
+    service.clock = lambda: now[0]
+    waits, notices, queued = [], [], []
+
+    def send_count():
+        with sqlite3.connect(store.path) as conn:
+            return conn.execute("SELECT COUNT(*) FROM budget WHERE kind='send'").fetchone()[0]
+
+    async def sleep(seconds):
+        # Waiting never submits the write or consumes a send quota.
+        assert not bot.calls
+        assert send_count() == 0
+        waits.append(seconds)
+        now[0] += seconds
+
+    async def notify(text):
+        notices.append(text)
+
+    async def paced(**kwargs):
+        queued.append(kwargs)
+        if reconnect_in_queue and len(queued) == 1:
+            bot._wsr_api_clients["111111111"] = object()
+        await kwargs["action"]()
+
+    service.guard.run = paced
+    await send_preview(service, PrivateEvent(""), result(task), notify=notify, sleep=sleep)
+    assert waits == ([60, 60] if reconnect_in_queue else [60])
+    assert len(notices) == len(waits)
+    assert len(bot.calls) == 1 and bot.calls[0][0] == "send_private_msg"
+    assert send_count() == 1
+    assert service.client.calls == 0
+
+
+async def test_cancelled_recovery_wait_never_sends(store, task, settings, journal):
+    import asyncio
+
+    from qq_group_digest.platform import RecoveryPending
+
+    service, api = make_service(store, settings, journal)
+
+    async def pending():
+        raise RecoveryPending("waiting", 60)
+
+    async def cancelled(seconds):
+        raise asyncio.CancelledError
+
+    api.ready_to_send = pending
+    with pytest.raises(asyncio.CancelledError):
+        await send_preview(service, PrivateEvent(""), result(task), sleep=cancelled)
+    assert not api.private_sent
+
+
+async def test_repeated_reconnects_stop_without_writing(store, task, settings, journal):
+    from qq_group_digest.platform import RecoveryPending
+
+    service, api = make_service(store, settings, journal)
+    waits = []
+
+    async def pending():
+        raise RecoveryPending("waiting", 60)
+
+    async def sleep(seconds):
+        waits.append(seconds)
+
+    api.ready_to_send = pending
+    with pytest.raises(DigestError, match="尚未发送"):
+        await send_preview(service, PrivateEvent(""), result(task), sleep=sleep)
+    assert waits == [60] * 3 and not api.private_sent
