@@ -135,6 +135,7 @@ class Limits:
     max_messages: int = 5000
     max_history_chars: int = 300000
     llm_input_chars: int = 16000
+    history_cache_minutes: int = 30
     llm_calls_per_run: int = 32
     llm_calls_per_day: int = 100
     llm_timeout_seconds: int = 180
@@ -240,6 +241,7 @@ def parse_settings(raw):
         "max_messages": (20, 20000),
         "max_history_chars": (10000, 2000000),
         "llm_input_chars": (4000, 100000),
+        "history_cache_minutes": (0, 120),
         "llm_calls_per_run": (1, 100),
         "llm_calls_per_day": (1, 2000),
         "llm_timeout_seconds": (10, 900),

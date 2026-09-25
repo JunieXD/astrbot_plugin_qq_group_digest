@@ -121,7 +121,7 @@ async def test_preview_ack_progress_and_result_survive_stopped_event(
         async def generate(self, task, adapter, prompt, **kwargs):
             assert len(event.sent) == 1 and "已收到" in event.sent[0]
             status = await Commands(service).run("群摘要 状态 " + task.source_group)
-            assert "模型生成中" in status and "已读取 1 页、1 条" in status
+            assert "模型生成中" in status and "已查询 1 页" in status and "获得 1 条" in status
             if fail_model:
                 raise DigestError("模型暂时不可用")
             return output(prompt=prompt)

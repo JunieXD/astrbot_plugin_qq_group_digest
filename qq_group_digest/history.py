@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 
 from .config import IncompleteHistory
 from .models import Message
@@ -118,14 +119,27 @@ def normalize(raw, group, *, include_names=False):
 
 
 class HistoryReader:
-    def __init__(self, limits, journal):
+    def __init__(self, limits, journal, *, cache=None):
         self.limits, self.journal = limits, journal
+        self.cache = cache
 
-    async def read(self, adapter, task, start, end, *, progress=None):
+    async def read(self, adapter, task, start, end, *, progress=None, refresh=False):
         found, cursor, anchors, previous = {}, None, set(), None
         total_chars = 0
         crossed = False
         generation = None
+        read_start = start
+        captured = self.cache.clock() if self.cache else time.time()
+        if self.cache:
+            if refresh:
+                await self.cache.invalidate(adapter, task)
+            cached = None if refresh else await self.cache.load(adapter, task, start, end)
+            if cached:
+                prefix, read_start, captured = cached
+                found = {m.key: m for m in prefix}
+                total_chars = sum(len(m.text) for m in found.values())
+                if len(found) > self.limits.max_messages or total_chars > self.limits.max_history_chars:
+                    raise IncompleteHistory("缓存中的本期消息超过当前读取上限；请缩短时间范围或调整限制。")
         for page_number in range(1, self.limits.max_pages + 1):
             page = await adapter.history_page(
                 task.source_group, self.limits.page_size, cursor, generation=generation
@@ -139,7 +153,7 @@ class HistoryReader:
             ordered = sorted(messages, key=lambda m: (m.time, m.seq, m.message_id))
             oldest = ordered[0]
             for message in ordered:
-                if start <= message.time < end and message.sender != adapter.account:
+                if read_start <= message.time < end and message.sender != adapter.account:
                     old = found.get(message.key)
                     total_chars += len(message.text) - (len(old.text) if old else 0)
                     if total_chars > self.limits.max_history_chars:
@@ -153,7 +167,7 @@ class HistoryReader:
                 self.journal.record(
                     "历史读取进度", group=task.source_group, pages=page_number, messages=len(found)
                 )
-            if oldest.time < start:
+            if oldest.time < read_start:
                 crossed = True
                 break
             # Native pages may include the anchor itself. Reject non-progress instead of looping.
@@ -166,6 +180,10 @@ class HistoryReader:
         if not crossed:
             raise IncompleteHistory("历史读取达到页数上限，尚未覆盖时间窗口。")
         messages = sorted(found.values(), key=lambda m: (m.time, m.seq, m.key))
+        if self.cache:
+            # Persist only verified coverage and unexpanded text. Failed enrichment/model
+            # calls can reuse it; failed pagination never replaces a complete snapshot.
+            await self.cache.save(adapter, task, start, end, messages, captured)
         notes, expanded, failed, seen_forwards = [], 0, 0, set()
         if task.read_forwards:
             for message in messages:

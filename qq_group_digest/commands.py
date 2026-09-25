@@ -10,6 +10,7 @@ from .schedule import next_boundary, period_text
 HELP = """群聊摘要（仅 AstrBot 管理员私聊使用）：
 /群摘要 状态 [来源群号]
 /群摘要 预览 来源群号
+/群摘要 预览 来源群号 刷新
 /群摘要 执行 来源群号
 /群摘要 暂停 来源群号
 /群摘要 恢复 来源群号
@@ -71,8 +72,9 @@ class Commands:
                 if progress:
                     elapsed = max(0, int(self.s.clock() - progress["started"]))
                     result.append(
-                        f"私聊预览：{progress['phase']}，已读取 {progress['pages']} 页、"
-                        f"{progress['messages']} 条消息，已用 {elapsed // 60} 分 {elapsed % 60} 秒。"
+                        f"私聊预览：{progress['phase']}，已查询 {progress['pages']} 页，"
+                        f"获得 {progress['messages']} 条消息（含复用缓存），"
+                        f"已用 {elapsed // 60} 分 {elapsed % 60} 秒。"
                     )
                 if attention_count:
                     result.append(f"需要处理 {attention_count} 个批次，优先显示最早的未解决记录。")
@@ -94,7 +96,8 @@ class Commands:
                 if attention_count > len(attention):
                     result.append("还有其他未解决记录；处理以上批次后，再查看状态即可。")
             return "\n".join(result) or "尚未配置来源群，请先在插件配置中添加任务。"
-        if action in {"预览", "执行", "暂停", "恢复"} and len(parts) == 2:
+        refresh = action == "预览" and len(parts) == 3 and parts[2] == "刷新"
+        if action in {"预览", "执行", "暂停", "恢复"} and (len(parts) == 2 or refresh):
             task = self.s.settings().find(identifier(parts[1], "来源群"))
             if action in {"暂停", "恢复"}:
                 await self.s.store.call("set", "paused:" + task.key, action == "暂停")
@@ -105,7 +108,7 @@ class Commands:
             if self.s.lock(task.key).locked():
                 raise DigestError("这个群正在读取、生成或发送，请稍后再试。")
             if action == "预览":
-                digest, start, end = await self.s.preview(task, notify=self.notify)
+                digest, start, end = await self.s.preview(task, notify=self.notify, refresh=refresh)
                 return (
                     ("预览结果（未向目标群发送）：\n" + full_text(task, digest, start, end))
                     if digest.items

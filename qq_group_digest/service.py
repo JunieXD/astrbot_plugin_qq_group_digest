@@ -9,6 +9,7 @@ import time
 from .config import Deferred, DigestError, Task
 from .delivery import Delivery
 from .history import HISTORY_NOTES, HistoryReader
+from .history_cache import HistoryCache
 from .models import Message
 from .render import make_payloads
 from .schedule import latest_boundary
@@ -227,9 +228,7 @@ class Service:
     async def build(self, run, task, adapter):
         limits = self.settings().limits
         if run["snapshot"] is None:
-            messages, notes = await HistoryReader(limits, self.journal).read(
-                adapter, task, run["read_start"], run["end"]
-            )
+            messages, notes = await self.history_reader().read(adapter, task, run["read_start"], run["end"])
             notes = list(dict.fromkeys([n for n in run["notes"] if n not in HISTORY_NOTES] + notes))
             await self.store.call("fetched", run["id"], [m.dump() for m in messages], notes)
         else:
@@ -249,7 +248,12 @@ class Service:
             "摘要生成完成", run=run["id"], topics=len(digest.items), deliveries=len(deliveries)
         )
 
-    async def preview(self, task, *, notify=None):
+    def history_reader(self):
+        limits = self.settings().limits
+        cache = HistoryCache(self.store, limits.history_cache_minutes, self.journal, clock=self.clock)
+        return HistoryReader(limits, self.journal, cache=cache)
+
+    async def preview(self, task, *, notify=None, refresh=False):
         async with self.lock(task.key):
             until = await self.store.call("get", "preview:" + task.key, 0)
             if until > self.clock():
@@ -276,8 +280,8 @@ class Service:
                         f"可发送 /群摘要 状态 {task.source_group} 查看进度；无需重复预览。"
                     )
                 adapter = await self.router.resolve(task)
-                messages, notes = await HistoryReader(self.settings().limits, self.journal).read(
-                    adapter, task, start, end, progress=reading
+                messages, notes = await self.history_reader().read(
+                    adapter, task, start, end, progress=reading, refresh=refresh
                 )
                 progress["phase"] = "模型生成中"
                 digest = await Summarizer(self.client, self.settings().limits).summarize(

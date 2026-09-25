@@ -82,6 +82,10 @@ class Store:
             CREATE INDEX IF NOT EXISTS deliveries_run ON deliveries(run,target,part);
             CREATE TABLE IF NOT EXISTS budget (kind TEXT, scope TEXT, at REAL);
             CREATE INDEX IF NOT EXISTS budget_window ON budget(kind,scope,at);
+            CREATE TABLE IF NOT EXISTS history_cache (
+                scope TEXT PRIMARY KEY, start INTEGER NOT NULL, end INTEGER NOT NULL,
+                captured REAL NOT NULL, expires REAL NOT NULL, messages TEXT NOT NULL
+            );
             PRAGMA user_version=1;
         """)
         with self.db:
@@ -99,6 +103,23 @@ class Store:
     def get(self, key, default=None):
         row = self.db.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else default
+
+    def history_cache_get(self, scope):
+        row = self.db.execute("SELECT * FROM history_cache WHERE scope=?", (scope,)).fetchone()
+        return dict(row) if row else None
+
+    def history_cache_put(self, scope, start, end, captured, expires, messages, now):
+        with self.db:
+            self.db.execute("DELETE FROM history_cache WHERE expires<=?", (now,))
+            if expires > now:
+                self.db.execute(
+                    "INSERT OR REPLACE INTO history_cache VALUES (?,?,?,?,?,?)",
+                    (scope, start, end, captured, expires, encode(messages)),
+                )
+
+    def history_cache_delete(self, scope):
+        with self.db:
+            self.db.execute("DELETE FROM history_cache WHERE scope=?", (scope,))
 
     def set(self, key, value):
         with self.db:
@@ -402,6 +423,7 @@ class Store:
 
     def cleanup(self, now, snapshot_days, result_days):
         with self.db:
+            self.db.execute("DELETE FROM history_cache WHERE expires<=?", (now,))
             self.db.execute("DELETE FROM budget WHERE at<?", (now - 86401,))
             self.db.execute(
                 "UPDATE runs SET snapshot=NULL WHERE created<? AND status IN ('complete','failed','generated')",

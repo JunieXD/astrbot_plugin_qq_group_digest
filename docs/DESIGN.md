@@ -27,6 +27,7 @@ flowchart LR
 | `render.py` | 一份结构化摘要对应四种确定性展示。 |
 | `delivery.py` | 按目标和分段投递、能力检查、有限历史核对。 |
 | `store.py` | SQLite 事务、时间进度、输入快照、发送意图和滚动额度。 |
+| `history_cache.py` | 已验证历史覆盖区间的短期复用、账号隔离和固定有效期。 |
 | `pacing.py` / `resources.py` | 共享队列兼容、日志轮转、跨进程实例锁。 |
 
 平台 I/O、模型 I/O 与纯配置/排版逻辑分开，可独立测试。无需导入其他插件代码，部署时不依赖其目录结构。
@@ -55,6 +56,12 @@ AstrBot 自带平台聊天历史有可配置的保留数量和内容转换规则
 窗口使用 `[start,end)`，额外的时间重叠只作为上下文。按原生群序号去重，缺失时使用群、消息标识、时间、发送者及文本组合。分页必须向更早内容推进，不能用 `count` 是否取满推断是否到达时间边界。
 
 NapCat 的消息 ID 缓存属于短 ID 映射，不等于历史记录的保留时长。重启后不持久复用这个游标。
+
+历史查询缓存保存展开转发之前的规范化消息及完整覆盖区间。命中要求账号、接入、群和昵称采集选项一致，旧区间覆盖本次起点且尚未过期。每次仍从实时首页开始查询，重查缓存尾部至少 60 秒；只有新查询跨过拼接边界后才合并。新查询结果整体替换刷新区间，避免把该区间已撤回消息从缓存补回。缓存原始捕获时间不因复用而延长，消息量和文字量仍受当前限制。未读完的分页不保存缓存；模型失败可以复用已经完整取得的原文。强制刷新先移除对应缓存，读取失败也不重新启用旧数据。
+
+该优化主要减少重复预览和短期重试的读取，不能省掉首次读取或尚未获取的新消息；TTL 外的旧内容会重新读取。有效期内未被重查区间可能存在撤回、延迟同步或群名片变化，管理员可强制刷新。缓存到期后不会参与读取，并随定期清理回收。
+
+NapCat 的开源查询调用链在 `NodeIKernelMsgService` 处进入 QQ 客户端消息服务，仓库中的方法是接口声明，并未提供 QQ 内核缓存/网络分支的实现。源码还明确从 QQ 安装目录加载 `wrapper.node` 原生模块（[加载入口](https://github.com/NapNeko/NapCatQQ/blob/0b4cfe65ed889aa8e8061ee4c5b7edddec0d10f5/packages/napcat-core/index.ts#L62)）。可核查的源码：[历史接口](https://github.com/NapNeko/NapCatQQ/blob/0b4cfe65ed889aa8e8061ee4c5b7edddec0d10f5/packages/napcat-onebot/action/go-cqhttp/GetGroupMsgHistory.ts)、[消息服务声明](https://github.com/NapNeko/NapCatQQ/blob/0b4cfe65ed889aa8e8061ee4c5b7edddec0d10f5/packages/napcat-core/services/NodeIKernelMsgService.ts#L160)。不能据此断言每次查询都联网或一定只访问本地。
 
 读取时将游标与连接代次绑定，在发出带游标的查询前及返回后检查连接。重连中断读取，从第一页恢复，避免把新连接的短 ID 映射与旧页面拼接。查询失败冷却按接入持久化，影响该接入的后续插件查询。
 
