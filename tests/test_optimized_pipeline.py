@@ -36,7 +36,7 @@ async def test_overlong_output_repairs_validated_candidates_only(task):
             return output(title="标题", body="字" * (2636 if len(self.prompts) == 1 else 1500))
 
     client = Client()
-    digest = await Summarizer(client, Limits()).summarize(
+    digest = await Summarizer(client, replace(Limits(), llm_context_tokens=64000)).summarize(
         task, None, [Message("a", "100", NOW - 1, "123456", "原始聊天正文" * 1000)], NOW - 20, NOW
     )
     assert digest.items and len(client.prompts) == 2

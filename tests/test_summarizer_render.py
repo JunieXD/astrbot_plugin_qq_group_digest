@@ -190,9 +190,16 @@ async def test_empty_window_never_calls_model(task):
 @pytest.mark.parametrize("mode", MODES)
 def test_four_modes_use_literal_text_and_robot_identity(task, mode):
     digest = Digest(
-        [Item("通知", "[CQ:at,qq=all] 不应触发提及", ("m1",)), Item("链接", "https://example.org", ("m2",))]
+        [
+            Item("通知", "[CQ:at,qq=all] 不应触发提及（未经核实）", ("m1",)),
+            Item("链接", "https://example.org", ("m2",)),
+        ],
+        ["图片未识别", "技术诊断不对群成员展示"],
     )
     payloads = make_payloads(replace(task, mode=mode), digest, NOW - 100, NOW, "111111111", Limits())
+    serialized = json.dumps(payloads, ensure_ascii=False)
+    assert "未经核实" not in serialized and "技术诊断" not in serialized and "图片未识别" not in serialized
+    assert "https://example.org" in serialized
     if mode.startswith("普通"):
         assert all(seg["type"] == "text" for p in payloads for seg in p["message"])
         assert len(payloads) == (1 if mode.endswith("整篇") else 2)

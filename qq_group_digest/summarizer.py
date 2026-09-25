@@ -43,7 +43,7 @@ class Summarizer:
             f"最多 {task.max_topics} 个主题；通常每条标题和正文合计约 {max(30, int(per_item * 0.75))} 字。"
             f"全部标题正文目标不超过 {int(task.summary_chars * 0.8)} 字，硬上限 {task.summary_chars} 字。\n"
             "优先保留有用且具体的信息、署名、反例、适用范围和不确定性。"
-            "不同具体对象、事件或申请决策分别成条，不要把多所学校或多个独立事件挤进一条宽泛动态汇总。"
+            "每条只讲一个具体院校/学院、事件或申请决策，不以多校动态为题拼接多所学校。"
             "同一对象的补充和反驳可合并；压缩措辞但保持完整句子，不能用省略号截断信息。"
             "sources 列本条内容所依据的 u 发言者代号；每条聚焦具体事件，不要穷举整段讨论。\n"
             f"上期内容供去重：{prior}\n保留新增信息，忽略没有进展的重复内容。\n"
@@ -55,6 +55,14 @@ class Summarizer:
             )
         else:
             instructions += "无需引用昵称或成员代号，直接写群友反馈、转发信息等；不要输出署名占位符。\n"
+        footer = (
+            "\n输入结束。完整扫描整个时间窗口，按关注内容选择独立的有用信息，保留署名、分歧及限定；不要只总结开头或结尾。输出 items JSON，全文目标 "
+            + str(int(task.summary_chars * 0.8))
+            + " 字。每条聚焦一个具体院校/学院或事件，标题简短，正文按要点分为短段落，用换行分隔。"
+            + "不附加未经核实等免责声明或技术说明。"
+            + "正文署名用群友{{u代号}}，sources 同样只列 u 发言者代号。不要把 m 消息编号当成发言者。"
+        )
+        merge_marker = "候选摘要（sources 和 source_speakers 保留原始归属）："
         if hasattr(self.client, "budget"):
             budget = await self.client.budget(task, adapter)
         else:
@@ -64,7 +72,7 @@ class Summarizer:
                 task.provider_id.rsplit("/", 1)[-1], 32000
             )
             budget = InputBudget(context - self.limits.llm_output_tokens - 2048, self.limits.llm_input_chars)
-        room = budget.subtract(SYSTEM + instructions, reserve=400)
+        room = budget.subtract(SYSTEM + instructions + footer + merge_marker)
         if room.bytes < 1000 or (room.chars and room.chars < 1000):
             raise DigestError("关注内容过长，模型输入空间不足。")
         chunks = transcript.chunks(room, self.limits.llm_overlap_messages)
@@ -73,20 +81,8 @@ class Summarizer:
 
         async def extract(content, allowed, phase, index=1, total=1):
             nonlocal calls
-            marker = (
-                "候选摘要（sources 和 source_speakers 保留原始归属）：" if phase == "reduce" else "聊天记录："
-            )
-            prompt = (
-                instructions
-                + "\n"
-                + marker
-                + "\n"
-                + content
-                + "\n输入结束。完整扫描整个时间窗口，按关注内容选择独立的有用信息，保留署名、分歧及限定；不要只总结开头或结尾。输出 items JSON，全文目标 "
-                + str(int(task.summary_chars * 0.8))
-                + " 字。每条聚焦一个具体院校/学院或事件，不做多校动态大拼盘。"
-                + "正文署名用群友{{u代号}}，sources 同样只列 u 发言者代号。不要把 m 消息编号当成发言者。"
-            )
+            marker = merge_marker if phase == "reduce" else "聊天记录："
+            prompt = instructions + "\n" + marker + "\n" + content + footer
             if not budget.fits(SYSTEM + prompt):
                 raise DigestError("摘要输入超过模型预算。")
             key = None
@@ -233,4 +229,6 @@ class Summarizer:
                     selected=len(selected),
                     characters=used,
                 )
+        if final_notes and hasattr(self.client, "journal"):
+            self.client.journal.record("摘要诊断", group=task.source_group, notes=final_notes)
         return Digest(selected, final_notes)

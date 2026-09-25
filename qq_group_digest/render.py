@@ -1,6 +1,7 @@
 """One validated digest, four deterministic presentation styles."""
 
 import hashlib
+import re
 
 from .config import DigestError
 from .schedule import period_text
@@ -12,17 +13,71 @@ def plain(text):
 
 
 def header(task, start, end):
-    return f"{task.label} · 群聊摘要\n{period_text(task, start, end)}"
+    return f"📰 {task.label} · 群聊摘要\n\n{period_text(task, start, end)}"
+
+
+def display_text(text):
+    # Older saved digests may still contain the previous stock disclaimer.
+    # Keep actual qualifiers such as 听说/可能 and text inside quotations intact.
+    text = re.sub(r"[（(](?:群友(?:反馈|说法)[，,]\s*)?未经核实[）)]", "", text)
+    return re.sub(
+        r"(?:以上(?:内容|信息|说法)?(?:均为|均是|都是)?群友(?:反馈|说法|转述)[，,；;]?\s*未经核实[。.]?)\s*$",
+        "",
+        text,
+    ).strip()
+
+
+def readable_body(text):
+    text = display_text(text)
+    paragraphs = []
+    pairs = {"“": "”", "‘": "’", "「": "」", "『": "』", "（": "）", "(": ")"}
+    for line in text.splitlines():
+        line = re.sub(r"^\s*[•●·*-]\s+", "", line).strip()
+        if not line:
+            continue
+        # Preserve model-supplied short paragraphs. For legacy walls of text,
+        # wrap complete sentences without breaking quoted nicknames or URLs.
+        if len(line) <= 120:
+            paragraphs.append(line)
+            continue
+        stack, start, group = [], 0, ""
+        urls = iter(re.finditer(r"https?://\S+", line))
+        url = next(urls, None)
+        for i, char in enumerate(line):
+            while url and i >= url.end():
+                url = next(urls, None)
+            if url and url.start() <= i < url.end():
+                continue
+            if char in pairs:
+                stack.append(pairs[char])
+            elif stack and char == stack[-1]:
+                stack.pop()
+            if char not in "。！？" or stack:
+                continue
+            sentence = line[start : i + 1]
+            if group and len(group) + len(sentence) > 120:
+                paragraphs.append(group)
+                group = ""
+            group += sentence
+            start = i + 1
+        tail = line[start:]
+        if group and tail and len(group) + len(tail) > 120:
+            paragraphs.append(group)
+            group = ""
+        if group or tail:
+            paragraphs.append(group + tail)
+    return "\n\n".join("• " + paragraph for paragraph in paragraphs)
 
 
 def bodies(digest):
-    return [f"{i + 1}. {item.title}\n{item.body}" for i, item in enumerate(digest.items)]
+    return [
+        f"{i + 1:02d} · {display_text(item.title)}\n\n{readable_body(item.body)}"
+        for i, item in enumerate(digest.items)
+    ]
 
 
 def full_text(task, digest, start, end):
     pieces = [header(task, start, end), *bodies(digest)]
-    if digest.notes:
-        pieces.append("说明：" + " ".join(dict.fromkeys(digest.notes)))
     return "\n\n".join(pieces)
 
 
@@ -54,8 +109,6 @@ def make_payloads(task, digest, start, end, account, limits, mode=None):
         room = limits.message_chars - len(title) - 32
         for body in bodies(digest):
             pieces.extend(split_text(body, room))
-        if digest.notes:
-            pieces.extend(split_text("说明：" + " ".join(dict.fromkeys(digest.notes)), room))
         if len(pieces) > limits.max_parts:
             raise DigestError("摘要分段超过发送上限，请缩短摘要或改用合并转发。")
         return [
@@ -66,8 +119,6 @@ def make_payloads(task, digest, start, end, account, limits, mode=None):
         texts = [complete]
     else:
         texts = [title, *bodies(digest)]
-        if digest.notes:
-            texts.append("说明：" + " ".join(dict.fromkeys(digest.notes)))
     if len(texts) > 24 or any(len(t) > 16000 for t in texts):
         raise DigestError("转发内容过长，请减少摘要长度。")
     return [
@@ -76,10 +127,10 @@ def make_payloads(task, digest, start, end, account, limits, mode=None):
                 {"type": "node", "data": {"user_id": account, "nickname": "群聊摘要", "content": [plain(t)]}}
                 for t in texts
             ],
-            "source": f"{task.label} · 群聊摘要",
+            "source": f"📰 {task.label} · 群聊摘要",
             "news": [{"text": period_text(task, start, end)}],
-            "summary": f"{len(digest.items)} 条信息",
-            "prompt": "[群聊摘要]",
+            "summary": f"共 {len(digest.items)} 条 · 点开查看",
+            "prompt": "[📰 群聊摘要]",
         }
     ]
 
