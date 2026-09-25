@@ -2,20 +2,39 @@
 
 from copy import copy, deepcopy
 
+from .config import DigestError, GenerationOptions
+
 CONTEXTS = {"ecnu-max": 512000, "ecnu-plus": 256000}
+ECNU_EFFORTS = {"ecnu-max": ("low", "high", "max"), "ecnu-plus": ("low", "medium", "xhigh")}
 
 
-def effective_options(model, config, limits):
+def effective_options(model, config, limits, generation=None):
+    generation = generation or GenerationOptions()
+    model = model.strip().lower()
     options = deepcopy(config.get("custom_extra_body") or {})
-    if model.lower() in CONTEXTS:
+    if model in CONTEXTS:
         # Preserve semantic lengths and do not constrain characters while decoding.
         options.update(
             response_format={"type": "json_object"},
-            thinking={"type": "disabled"},
             max_tokens=limits.llm_output_tokens,
         )
-        options.setdefault("temperature", 0.2)
-        options.pop("reasoning_effort", None)
+        if generation.ecnu_thinking != "inherit":
+            options["thinking"] = {"type": generation.ecnu_thinking}
+            options.pop("reasoning_effort", None)
+            if generation.ecnu_thinking == "enabled":
+                effort = generation.ecnu_reasoning_effort
+                if effort not in ECNU_EFFORTS[model]:
+                    raise DigestError(
+                        f"{model} 不支持思考程度 {effort}，请选择 {' / '.join(ECNU_EFFORTS[model])}。"
+                    )
+                options["reasoning_effort"] = effort
+        thinking = options.get("thinking")
+        if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+            # ECNU recommends default sampling in thinking mode.
+            options.pop("temperature", None)
+            options.pop("top_p", None)
+        else:
+            options.setdefault("temperature", 0.2)
         options.pop("max_completion_tokens", None)
     return options
 
@@ -25,8 +44,12 @@ async def _no_implicit_retry(error, *args, **kwargs):
     raise error
 
 
-def request_provider(provider, task, limits, allowed_sources=None):
-    model = str(provider.get_model() or "").lower() if callable(getattr(provider, "get_model", None)) else ""
+def request_provider(provider, task, limits, allowed_sources=None, *, generation=None):
+    model = (
+        str(provider.get_model() or "").strip().lower()
+        if callable(getattr(provider, "get_model", None))
+        else ""
+    )
     if model not in CONTEXTS:
         return None, {}
     config = getattr(provider, "provider_config", None)
@@ -35,7 +58,7 @@ def request_provider(provider, task, limits, allowed_sources=None):
         raise RuntimeError("ECNU 摘要需要 AstrBot OpenAI Chat Completion 适配器")
     local = copy(provider)
     local.provider_config = deepcopy(config)
-    options = effective_options(model, config, limits)
+    options = effective_options(model, config, limits, generation)
     local.provider_config["custom_extra_body"] = options
     local.client = client.with_options(max_retries=0, timeout=limits.llm_timeout_seconds)
     local._handle_api_error = _no_implicit_retry

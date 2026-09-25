@@ -154,9 +154,10 @@ def test_ecnu_options_do_not_mutate_shared_provider(task):
     local, options = request_provider(provider, task, Limits())
     assert provider.provider_config == original and provider.client is client
     assert local.client is not client
-    assert options["thinking"] == {"type": "disabled"}
+    assert options["thinking"] == {"type": "enabled"}
+    assert options["reasoning_effort"] == "low"
     assert options["response_format"] == {"type": "json_object"}
-    assert options["temperature"] == 0.2
+    assert "temperature" not in options
 
 
 async def test_ecnu_context_error_cannot_silently_remove_history(task):

@@ -7,14 +7,14 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 
-from qq_group_digest.config import DigestError, Limits, Pace, parse_settings
+from qq_group_digest.config import DigestError, GenerationOptions, Limits, Pace, parse_settings
 from qq_group_digest.schedule import latest_boundary, next_boundary
 
 
 def test_schema_defaults_and_example_match_runtime():
     schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
     defaults = {k: v["default"] for k, v in schema.items() if "default" in v}
-    for name, cls in [("pace", Pace), ("limits", Limits)]:
+    for name, cls in [("pace", Pace), ("limits", Limits), ("llm_generation", GenerationOptions)]:
         values = {k: v["default"] for k, v in schema[name]["items"].items()}
         assert values == asdict(cls())
         defaults[name] = values

@@ -75,11 +75,14 @@ class LLMClient:
         return InputBudget(context - limits.llm_output_tokens - 2048, limits.llm_input_chars)
 
     async def cached(self, task, adapter, prompt):
-        limits = self.settings().limits
+        settings = self.settings()
+        limits = settings.limits
         pid, model, provider = await self.describe(task, adapter)
         config = getattr(provider, "provider_config", {})
         # Credentials never become part of the cache or its diagnostics.
-        options = effective_options(model, config if isinstance(config, dict) else {}, limits)
+        options = effective_options(
+            model, config if isinstance(config, dict) else {}, limits, settings.llm_generation
+        )
         key = (
             "llm:"
             + hashlib.sha256(
@@ -126,11 +129,18 @@ class LLMClient:
     ):
         pid, model, provider = await self.describe(task, adapter)
         async with self.locks.setdefault(pid, asyncio.Lock()):
-            limits = self.settings().limits
+            settings = self.settings()
+            limits = settings.limits
+            local, options = request_provider(
+                provider,
+                task,
+                limits,
+                kwargs.get("allowed_sources"),
+                generation=settings.llm_generation,
+            )
             await self.store.call(
                 "reserve_llm", run_id, time.time(), limits.llm_calls_per_day, limits.llm_calls_per_run
             )
-            local, options = request_provider(provider, task, limits, kwargs.get("allowed_sources"))
             call_id = None
             if self.statistics:
                 call_id = self.statistics.begin(

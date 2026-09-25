@@ -156,12 +156,19 @@ class Limits:
 
 
 @dataclass(frozen=True)
+class GenerationOptions:
+    ecnu_thinking: str = "enabled"
+    ecnu_reasoning_effort: str = "low"
+
+
+@dataclass(frozen=True)
 class Settings:
     enabled: bool = False
     tasks: tuple[Task, ...] = ()
     pace: Pace = field(default_factory=Pace)
     limits: Limits = field(default_factory=Limits)
     llm_statistics: dict = field(default_factory=lambda: normalize_statistics({}))
+    llm_generation: GenerationOptions = field(default_factory=GenerationOptions)
 
     def find(self, group):
         found = [t for t in self.tasks if t.source_group == group]
@@ -272,10 +279,21 @@ def parse_settings(raw):
         raise DigestError("模型输入字符上限应为 0（自动）或至少 4000。")
     if limits.llm_context_tokens and limits.llm_context_tokens < limits.llm_output_tokens + 4000:
         raise DigestError("模型上下文应为输出预留空间，并至少容纳 4000 tokens 输入。")
+    generation_raw = obj(raw.get("llm_generation", {}), "模型生成设置")
+    generation = {}
+    for key, choices in (
+        ("ecnu_thinking", ("enabled", "disabled", "inherit")),
+        ("ecnu_reasoning_effort", ("low", "medium", "high", "xhigh", "max")),
+    ):
+        value = generation_raw.get(key, getattr(GenerationOptions, key))
+        if not isinstance(value, str) or value not in choices:
+            raise DigestError(f"{key} 应选择 {' / '.join(choices)}。")
+        generation[key] = value
     return Settings(
         flag(raw.get("enabled", False), "启用定时摘要"),
         tuple(parsed),
         Pace(**pace),
         limits,
         normalize_statistics(raw.get("llm_statistics")),
+        GenerationOptions(**generation),
     )

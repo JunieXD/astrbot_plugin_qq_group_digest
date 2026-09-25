@@ -153,6 +153,36 @@
       }
     }
   },
+  "llm_generation": {
+    "description": "模型生成设置（仅本插件）",
+    "type": "object",
+    "items": {
+      "ecnu_thinking": {
+        "description": "ECNU 思考模式",
+        "type": "string",
+        "default": "enabled",
+        "options": [
+          "enabled",
+          "disabled",
+          "inherit"
+        ],
+        "hint": "enabled 开启；disabled 关闭；inherit 跟随 AstrBot 共享模型设置。仅对 ecnu-max / ecnu-plus 的摘要生成生效，预览也使用此设置。"
+      },
+      "ecnu_reasoning_effort": {
+        "description": "ECNU 思考程度",
+        "type": "string",
+        "default": "low",
+        "options": [
+          "low",
+          "high",
+          "max",
+          "medium",
+          "xhigh"
+        ],
+        "hint": "仅在上面选择 enabled 时覆盖档位。Max 支持 low / high / max；Plus 支持 low / medium / xhigh。推荐 low；不支持的组合会明确报错。"
+      }
+    }
+  },
   "pace": {
     "description": "执行节奏（默认即可）",
     "type": "object",
@@ -341,7 +371,7 @@
         "description": "模型输出最多多少 tokens",
         "type": "int",
         "default": 8192,
-        "hint": "1024～32000，默认 8192；同时仍遵守每群摘要字数限制。"
+        "hint": "1024～32000，默认 8192。思考模式下需同时留足思考与最终正文的空间；截断时本期停止，不发布残缺摘要。"
       },
       "llm_overlap_messages": {
         "description": "分块时补充几条上下文",
