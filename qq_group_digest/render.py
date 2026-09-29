@@ -76,7 +76,8 @@ def readable_body(text):
 
 def item_heading(index, item):
     title = re.sub(r"\s+", " ", display_text(item.title)).strip()
-    return f"{index + 1:02d} · {title}"
+    number = "🔟" if index == 9 else "".join(digit + "\ufe0f\u20e3" for digit in str(index + 1))
+    return f"{number} {title}"
 
 
 def contents(task, digest):
