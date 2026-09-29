@@ -335,3 +335,60 @@ def test_fingerprint_preserves_forward_node_boundaries():
 )
 def test_meaningful_punctuation_case_and_field_boundaries_not_deduplicated(first, second):
     assert fingerprint(Item(*first, ("m1",))) != fingerprint(Item(*second, ("m2",)))
+
+
+async def test_single_plain_budget_includes_layout_and_keeps_priority_prefix(task):
+    task = replace(task, mode="普通消息·整篇", summary_chars=6000, max_topics=8)
+    limits = replace(Limits(), message_chars=500)
+    prompts = []
+
+    class Client:
+        async def generate(self, task, adapter, prompt, **kwargs):
+            prompts.append(prompt)
+            assert task.summary_chars < 500
+            return json.dumps(
+                {
+                    "items": [
+                        {"title": f"主题{i}", "body": ["具体条件及时间。" * 10], "sources": ["m1"]}
+                        for i in range(8)
+                    ]
+                }
+            )
+
+    digest = await Summarizer(Client(), limits).summarize(
+        task, None, [Message("m1", "1", NOW, "123456", "群友提供的有用信息")], NOW - 60, NOW
+    )
+    payloads = make_payloads(task, digest, NOW - 60, NOW, "1", limits)
+    assert len(prompts) == 1 and len(payloads) == 1
+    assert list(payloads[0]) == ["message"]
+    assert len(payloads[0]["message"][0]["data"]["text"]) <= 500
+    assert 0 < len(digest.items) < 8
+    assert [i.title for i in digest.items] == [f"主题{i}" for i in range(len(digest.items))]
+    assert all(i.body == "具体条件及时间。" * 10 for i in digest.items)
+    assert digest.notes
+
+
+async def test_single_plain_does_not_report_empty_when_layout_cannot_fit(task):
+    task = replace(task, mode="普通消息·整篇", summary_chars=6000, max_topics=1)
+    limits = replace(Limits(), message_chars=500)
+
+    class Client:
+        async def generate(self, task, adapter, prompt, **kwargs):
+            # Many short bullet points fit the semantic budget but not the layout.
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "title": "具体信息",
+                            "body": ["条" + str(i) + "内" * 46 for i in range(8)],
+                            "sources": ["m1"],
+                        }
+                    ]
+                }
+            )
+
+    task = replace(task, content_title="长标题" * 20)
+    with pytest.raises(DigestError, match="首条摘要超过篇幅限制"):
+        await Summarizer(Client(), limits).summarize(
+            task, None, [Message("m1", "1", NOW, "123456", "信息")], NOW - 60, NOW
+        )
