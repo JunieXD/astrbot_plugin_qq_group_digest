@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from qq_group_digest.config import DigestError
+from qq_group_digest.config import IMAGE_MODE, DigestError
 from qq_group_digest.schedule import latest_boundary
 from qq_group_digest.service import OWNER, Service
 
@@ -276,3 +276,94 @@ async def test_changed_history_options_reread_snapshot_and_refresh_notes(
     latest = await store.call("run", rid)
     assert latest["digest"]["items"]
     assert SKIPPED_FORWARD_NOTE not in latest["notes"]
+
+
+async def test_image_preview_carries_actual_group_name_and_preserves_snapshot_metadata(
+    store, task, settings, journal
+):
+    from qq_group_digest.models import Digest
+
+    task = replace(task, mode=IMAGE_MODE, name="这是任务标签，不是群名")
+    service, api = make_service(store, replace(settings, tasks=(task,)), journal)
+    api.history = [raw_message(10, NOW - 1), raw_message(1, NOW - 86400 - 601)]
+    looked_up = []
+
+    async def group_name(group):
+        looked_up.append(group)
+        return "四非计算机保研群"
+
+    api.group_name = group_name
+    digest, _, _ = await service.preview(task)
+    assert digest.group_name == "四非计算机保研群"
+    assert looked_up == [task.source_group]
+    assert digest.activity.total_messages == 1
+    assert Digest.restore(digest.dump()).group_name == digest.group_name
+
+
+async def test_actual_group_name_lookup_is_only_used_for_image_mode(store, task, settings, journal):
+    from qq_group_digest.models import Digest, Item
+
+    service, api = make_service(store, settings, journal)
+    called = []
+
+    async def group_name(group):
+        called.append(group)
+        return "真实群名"
+
+    api.group_name = group_name
+    digest = Digest([Item("通知", "正文", ())])
+    result = await service.with_metadata(task, digest, [], NOW - 3600, NOW, api)
+    assert result is digest
+    assert not called
+
+
+async def test_image_build_passes_actual_group_name_to_presentation_and_saves_it(
+    store, task, settings, journal
+):
+    task = replace(task, mode=IMAGE_MODE, name="可配置的任务标签")
+    service, api = make_service(store, replace(settings, tasks=(task,)), journal)
+    looked_up, presented = [], []
+
+    async def group_name(group):
+        looked_up.append(group)
+        return "真实的保研交流群"
+
+    async def payloads(task, digest, *args):
+        presented.append(digest)
+        return [{"message": [{"type": "image", "data": {"file": "file:///tmp/test-poster.png"}}]}]
+
+    api.group_name = group_name
+    service.presentation = SimpleNamespace(payloads=payloads)
+    rid = await service.ensure_window(task, manual=True)
+    run = await store.call("run", rid)
+    api.history = [raw_message(10, run["end"] - 1), raw_message(1, run["read_start"] - 1)]
+    await service.build(run, task, api)
+    saved = await store.call("run", rid)
+    assert saved["status"] == "generated"
+    assert saved["digest"]["group_name"] == "真实的保研交流群"
+    assert presented[0].group_name == "真实的保研交流群"
+    assert presented[0].activity.total_messages == 1
+    assert looked_up == [task.source_group]
+
+
+async def test_image_preview_cancellation_during_metadata_cleans_progress(store, task, settings, journal):
+    import asyncio
+
+    task = replace(task, mode=IMAGE_MODE)
+    service, api = make_service(store, replace(settings, tasks=(task,)), journal)
+    api.history = [raw_message(10, NOW - 1), raw_message(1, NOW - 86400 - 601)]
+    started = asyncio.Event()
+
+    async def group_name(group):
+        started.set()
+        await asyncio.sleep(100)
+
+    api.group_name = group_name
+    pending = asyncio.create_task(service.preview(task))
+    await started.wait()
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert task.key not in service.previews
+    assert await store.call("latest", task.key) == []
+    assert not api.sent

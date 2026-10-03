@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+from dataclasses import replace
 
 from .config import IMAGE_MODE, Deferred, DigestError, Task
 from .delivery import Delivery
@@ -247,7 +248,7 @@ class Service:
         digest = await Summarizer(self.client, limits, run_id=run["id"]).summarize(
             task, adapter, messages, run["start"], run["end"], notes, previous
         )
-        digest = self.with_activity(task, digest, messages, run["start"], run["end"], adapter.account)
+        digest = await self.with_metadata(task, digest, messages, run["start"], run["end"], adapter)
         payloads = await self.payloads(task, digest, run["start"], run["end"], adapter.account)
         deliveries = [
             {"target": target, "part": i, "mode": task.mode, "payload": payload}
@@ -278,6 +279,14 @@ class Service:
             bot_id=account,
             excluded_members=task.poster_excluded_members,
         )
+
+    async def with_metadata(self, task, digest, messages, start, end, adapter):
+        digest = self.with_activity(task, digest, messages, start, end, adapter.account)
+        if task.mode != IMAGE_MODE:
+            return digest
+        name_reader = getattr(adapter, "group_name", None)
+        name = await name_reader(task.source_group) if callable(name_reader) else ""
+        return replace(digest, group_name=name)
 
     async def payloads(self, task, digest, start, end, account, mode=None):
         if self.presentation:
@@ -325,7 +334,7 @@ class Service:
                 digest = await Summarizer(
                     self.client, self.settings().limits, progress=lambda **fields: progress.update(fields)
                 ).summarize(task, adapter, messages, start, end, notes)
-                digest = self.with_activity(task, digest, messages, start, end, adapter.account)
+                digest = await self.with_metadata(task, digest, messages, start, end, adapter)
                 self.journal.record("私聊预览完成", group=task.source_group, topics=len(digest.items))
                 return digest, start, end
             except asyncio.CancelledError:

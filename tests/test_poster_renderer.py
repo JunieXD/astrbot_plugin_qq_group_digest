@@ -93,8 +93,62 @@ def test_pagination_keeps_whole_topics():
 
 
 async def test_empty_digest_does_not_launch_browser(tmp_path):
-    assert await PosterRenderer(tmp_path).render({"items": []}) == []
+    renderer = PosterRenderer(tmp_path)
+    renderer._font_path = tmp_path / "absent-font.woff2"
+    assert await renderer.render({"items": []}) == []
     assert not list(tmp_path.iterdir())
+
+
+async def test_missing_font_is_local_render_error_not_initialization_error(tmp_path):
+    renderer = PosterRenderer(tmp_path)
+    renderer._font_path = tmp_path / "absent-font.woff2"
+    with pytest.raises(PosterRenderError, match="字体资源缺失"):
+        await renderer.render(context())
+    assert renderer._playwright is None
+
+
+def test_segments_preserve_multiple_author_positions(tmp_path):
+    data = context(1)
+    data["items"][0]["authors"] = []
+    data["items"][0]["body_points"] = [
+        {
+            "segments": [
+                {"author": {"name": "小林"}},
+                {"text": "反馈这个方向值得了解；"},
+                {"author": {"name": "小赵"}},
+                {"text": "补充了不同的经历。"},
+            ]
+        }
+    ]
+    result = PosterRenderer(tmp_path).html(data)
+    first, second = result.index("小林</span>"), result.index("小赵</span>")
+    assert first < result.index("反馈这个方向值得了解；") < second < result.index("补充了不同的经历。")
+    assert 'point-authors">' not in result
+
+
+def test_activity_order_and_tick_limits():
+    data = context()
+    data["activity"] = [
+        {"label": str((13 + hour) % 24), "date_label": "10月2日" if hour < 11 else "10月3日", "count": hour}
+        for hour in range(25)
+    ]
+    chart = normalize_context(data)["chart"]
+    assert [point["count"] for point in chart["points"]] == list(range(25))
+    assert len(chart["labels"]) <= 8
+    assert chart["labels"][0]["label"] == chart["labels"][-1]["label"] == "13"
+    assert [date["label"] for date in chart["dates"]] == ["10月2日", "10月3日"]
+    assert " C " in chart["line"]
+
+
+def test_local_font_and_numeric_badges(tmp_path):
+    renderer = PosterRenderer(tmp_path)
+    html = renderer.html(context())
+    assert "data:font/woff2;base64," in html
+    assert "font-src data:" in html
+    assert 'class="topic-number">1</span>' in html
+    assert "按小时合计" not in html
+    assert "按信息价值排序" not in html
+    assert "群聊手记" not in html
 
 
 @pytest.fixture

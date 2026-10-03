@@ -14,6 +14,10 @@ class RecoveryPending(Deferred):
 
 
 class Adapter:
+    GROUP_NAME_TTL = 24 * 60 * 60
+    GROUP_NAME_FAILURE_TTL = 60 * 60
+    GROUP_NAME_TIMEOUT = 5
+
     def __init__(self, pid, bot, store, settings, journal, *, clock=time.time, sleep=asyncio.sleep):
         self.pid, self.bot = str(pid), bot
         self.store, self.settings, self.journal = store, settings, journal
@@ -23,6 +27,14 @@ class Adapter:
         self._connections = None
         self._objects = ()
         self.generation = 0
+        self._group_name_lock = asyncio.Lock()
+        # Plain metadata can survive a plugin reload without retaining the old
+        # adapter or its event loop. Bound the map after each lookup.
+        name_attribute = "_qq_group_digest_group_names_v1"
+        self._group_names = getattr(bot, name_attribute, None)
+        if not isinstance(self._group_names, dict):
+            self._group_names = {}
+            setattr(bot, name_attribute, self._group_names)
         # The OneBot client outlives a plugin reload. Keep only connection objects
         # here, never old adapters, stores or callbacks; retain references to
         # prevent object-id reuse from hiding a genuine reconnect.
@@ -166,6 +178,47 @@ class Adapter:
         if not account.isdigit() or int(account) <= 0 or (self.account and self.account != account):
             raise DigestError("无法确认机器人 QQ 身份。")
         self.account = account
+
+    async def group_name(self, group):
+        """Best-effort actual QQ name; missing metadata must not stop a digest.
+
+        NapCat's standard get_group_info starts with getGroupList(false), so no
+        forced detail refresh is necessary. Use the shared read pacing and quota,
+        with a short overall deadline including any lock or pacing wait.
+        """
+        group = identifier(group, "群名称查询")
+        cache_key = f"{self.account or self.pid}:{group}"
+        old_name, expires = self._group_names.get(cache_key, ("", 0))
+        if expires > self.clock():
+            return old_name
+
+        async def lookup():
+            async with self._group_name_lock:
+                nonlocal cache_key, old_name
+                await self.check_connection()
+                cache_key = f"{self.account or self.pid}:{group}"
+                old_name, expires = self._group_names.get(cache_key, ("", 0))
+                if expires > self.clock():
+                    return old_name
+                data = await self.read("get_group_info", group_id=group)
+                name = data.get("group_name") if isinstance(data, dict) else None
+                if not isinstance(name, str) or not name.strip():
+                    raise DigestError("群信息没有提供群名称。")
+                name = name.strip()[:200]
+                self._group_names[cache_key] = (name, self.clock() + self.GROUP_NAME_TTL)
+                return name
+
+        try:
+            return await asyncio.wait_for(lookup(), self.GROUP_NAME_TIMEOUT)
+        except Exception as exc:
+            self._group_names[cache_key] = (old_name, self.clock() + self.GROUP_NAME_FAILURE_TTL)
+            self.journal.record("群名称读取失败", group=group, error_type=type(exc).__name__)
+            return old_name
+        finally:
+            if len(self._group_names) > 128:
+                oldest = sorted(self._group_names, key=lambda key: self._group_names[key][1])
+                for key in oldest[: len(self._group_names) - 128]:
+                    self._group_names.pop(key, None)
 
     async def online(self):
         await self.check_connection()

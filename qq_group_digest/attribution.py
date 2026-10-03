@@ -98,7 +98,7 @@ def _speaker_boundaries(text, marker):
 
 
 def poster_points(item):
-    """Shorten only names inserted by attribution, with exact per-point authors.
+    """Place exact attributed speakers in the prose as rich text segments.
 
     Display names are never matched against a directory. Old digests lacking
     precise spans keep their prose; their item-level speakers remain available
@@ -118,7 +118,9 @@ def poster_points(item):
         previous = span.end
     if not spans:
         return [
-            {"text": p.removeprefix("• "), "authors": ()} for p in readable_body(item.body).split("\n\n") if p
+            {"text": p.removeprefix("• "), "authors": (), "segments": [{"text": p.removeprefix("• ")}]}
+            for p in readable_body(item.body).split("\n\n")
+            if p
         ]
     prefix = "\ue000"
     while prefix in item.body:
@@ -127,8 +129,8 @@ def poster_points(item):
     pieces, previous = [], 0
     for index, span in enumerate(spans):
         before = item.body[previous : span.start]
-        # These labels describe the exact attributed speaker immediately after
-        # them. Replace the whole label/name pair with one generic '群友'.
+        # The chip itself identifies this exact speaker; a directly preceding
+        # generic label would repeat it. Keep all other prose unchanged.
         pieces.extend((re.sub(r"(?:群友|群|同学)\s*$", "", before), f"{prefix}{index}\ue001"))
         previous = span.end
     pieces.append(item.body[previous:])
@@ -137,14 +139,24 @@ def poster_points(item):
         if not paragraph:
             continue
         authors = {}
+        segments, previous = [], 0
+        paragraph = paragraph.removeprefix("• ")
+        for match in marker.finditer(paragraph):
+            if match.start() > previous:
+                segments.append({"text": paragraph[previous : match.start()]})
+            span = spans[int(match[1])]
+            segments.append({"speaker": Speaker(span.qq, span.name)})
+            previous = match.end()
+        if previous < len(paragraph):
+            segments.append({"text": paragraph[previous:]})
 
         def author(match):
             span = spans[int(match[1])]
             authors.setdefault(span.qq, Speaker(span.qq, span.name))
             return "群友"
 
-        text = marker.sub(author, paragraph.removeprefix("• ")).replace("群友等多位", "多位群友")
+        text = marker.sub(author, paragraph).replace("群友等多位", "多位群友")
         if len(authors) > 1:
             text = re.sub(r"群友(?:\s*[、和与及]\s*群友)+", "多位群友", text)
-        result.append({"text": text, "authors": tuple(authors.values())})
+        result.append({"text": text, "authors": tuple(authors.values()), "segments": segments})
     return result

@@ -31,3 +31,13 @@ def next_boundary(task, now):
 def period_text(task, start, end):
     zone = ZoneInfo(task.timezone)
     return "—".join(datetime.fromtimestamp(t, zone).strftime("%m/%d %H:%M") for t in (start, end))
+
+
+def poster_period(task, start, end):
+    zone = ZoneInfo(task.timezone)
+    dates = [datetime.fromtimestamp(t, zone) for t in (start, end)]
+    # A cross-year window needs its year to remain unambiguous.
+    show_year = dates[0].year != dates[1].year
+    return " — ".join(
+        (f"{date.year}年" if show_year else "") + f"{date.month}月{date.day}日 {date:%H:%M}" for date in dates
+    )

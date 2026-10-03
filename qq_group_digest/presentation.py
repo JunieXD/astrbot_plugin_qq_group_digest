@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .attribution import poster_points
 from .config import IMAGE_MODE, DigestError
 from .render import default_title, display_text, make_payloads, readable_body
-from .schedule import period_text
+from .schedule import poster_period
 
 
 class Presentation:
@@ -29,7 +31,7 @@ class Presentation:
         try:
             context = await self.context(task, digest, start, end)
             images = await asyncio.wait_for(self.renderer.render(context), timeout=90)
-            if not images or len(images) > limits.max_parts:
+            if not images or len(images) + bool(task.poster_followup_text) > limits.max_parts:
                 raise DigestError("海报页数超过发送上限，请减少主题数或正文长度。")
             result = [
                 {
@@ -44,6 +46,8 @@ class Presentation:
                 }
                 for path in images
             ]
+            if task.poster_followup_text:
+                result.append({"message": [{"type": "text", "data": {"text": task.poster_followup_text}}]})
             self.journal.record(
                 "本地海报渲染完成",
                 group=task.source_group,
@@ -85,7 +89,13 @@ class Presentation:
                     "title": display_text(item.title),
                     "body": body,
                     "body_points": [
-                        {"text": p["text"], "authors": [face(s) for s in p["authors"]]} for p in points
+                        {
+                            "segments": [
+                                {"author": face(segment["speaker"])} if "speaker" in segment else segment
+                                for segment in p["segments"]
+                            ]
+                        }
+                        for p in points
                     ]
                     if attributed
                     else [{"text": p, "authors": []} for p in body],
@@ -95,10 +105,36 @@ class Presentation:
                 }
             )
 
+        zone = ZoneInfo(task.timezone)
+        # Old saved digests used clock-hour totals that cannot be reliably
+        # unfolded across a date boundary. Do not invent a timeline for them.
+        activity_points = []
+        if activity and task.poster_show_activity:
+            dates = [datetime.fromtimestamp(stamp, zone) for stamp in activity.hourly_times]
+            for stamp, count in zip(activity.hourly_times, activity.hourly):
+                local = datetime.fromtimestamp(stamp, zone)
+                label = f"{local.hour:02d}" if local.minute == 0 else f"{local:%H:%M}"
+                # Repeated DST hours are distinct data points; make that visible.
+                if any(
+                    other.date() == local.date()
+                    and other.hour == local.hour
+                    and other.utcoffset() != local.utcoffset()
+                    for other in dates
+                ):
+                    label += f" ({local:%z})"
+                activity_points.append(
+                    {
+                        "label": label,
+                        "date_label": f"{local.month}月{local.day}日",
+                        "timestamp": stamp,
+                        "count": count,
+                    }
+                )
+
         return {
             "title": task.content_title or default_title(task),
-            "subtitle": task.label,
-            "period_label": period_text(task, start, end),
+            "subtitle": digest.group_name or f"QQ群 {task.source_group}",
+            "period_label": poster_period(task, start, end),
             "theme": task.poster_theme,
             "group_avatar_data_url": faces.get("group:" + task.source_group, ""),
             "stats": {
@@ -107,9 +143,7 @@ class Presentation:
             },
             "leaderboard": [{**face(m), "count": m.count} for m in leaders],
             "items": items,
-            "activity": [{"label": f"{i:02d}", "count": n} for i, n in enumerate(activity.hourly)]
-            if activity and task.poster_show_activity
-            else [],
+            "activity": activity_points,
         }
 
     async def close(self):

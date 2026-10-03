@@ -48,9 +48,13 @@ class Activity:
     participants: int
     members: tuple[ActivityMember, ...]
     hourly: tuple[int, ...]
+    hourly_times: tuple[int, ...] = ()
 
     def dump(self):
-        return asdict(self)
+        data = asdict(self)
+        if not self.hourly_times:
+            data.pop("hourly_times")
+        return data
 
     @classmethod
     def restore(cls, data):
@@ -59,6 +63,7 @@ class Activity:
             data["participants"],
             tuple(ActivityMember(**member) for member in data.get("members", [])),
             tuple(data.get("hourly", [0] * 24)),
+            tuple(data.get("hourly_times", [])),
         )
 
 
@@ -84,11 +89,14 @@ class Digest:
     items: list[Item]
     notes: list[str] = field(default_factory=list)
     activity: Activity | None = None
+    group_name: str = ""
 
     def dump(self):
         data = {"items": [i.dump() for i in self.items], "notes": self.notes}
         if self.activity is not None:
             data["activity"] = self.activity.dump()
+        if self.group_name:
+            data["group_name"] = self.group_name
         return data
 
     @classmethod
@@ -106,4 +114,5 @@ class Digest:
             ],
             data.get("notes", []),
             Activity.restore(data["activity"]) if data.get("activity") is not None else None,
+            data.get("group_name", ""),
         )

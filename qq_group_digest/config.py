@@ -94,6 +94,7 @@ class Task:
     poster_show_activity: bool = True
     poster_excluded_members: tuple[str, ...] = ()
     poster_fallback_to_plain: bool = True
+    poster_followup_text: str = ""
 
     @property
     def key(self):
@@ -255,6 +256,14 @@ def parse_settings(raw):
         if not isinstance(theme, str) or theme not in ("cream", "mint", "night"):
             raise DigestError("海报配色应选择 cream（奶油白）、mint（薄荷绿）或 night（夜间蓝）。")
         kw["poster_theme"] = theme
+        followup = poster.get("followup_text", "")
+        if (
+            not isinstance(followup, str)
+            or len(followup.strip()) > 500
+            or any((ord(c) < 32 and c != "\n") or 127 <= ord(c) < 160 for c in followup)
+        ):
+            raise DigestError("图片发送后附言应为最多 500 字的文字；留空不发送。")
+        kw["poster_followup_text"] = followup.strip()
         kw["poster_leaderboard_size"] = number(poster.get("leaderboard_size", 5), "活跃榜人数", 0, 10)
         for key in ("show_avatars", "show_activity", "fallback_to_plain"):
             kw["poster_" + key] = flag(poster.get(key, True), "海报 " + key)

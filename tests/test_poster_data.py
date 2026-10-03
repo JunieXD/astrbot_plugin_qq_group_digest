@@ -14,6 +14,10 @@ def message(key, sender="111", *, offset=0, name="", text="消息", forwards=())
     return Message(key, key, START + offset, sender, text, sender_name=name, forward_ids=list(forwards))
 
 
+def prose(point):
+    return {key: value for key, value in point.items() if key != "segments"}
+
+
 def test_activity_counts_original_period_excluding_bot_and_overlap():
     messages = [
         message("overlap", offset=-1, name="旧名字"),
@@ -29,7 +33,8 @@ def test_activity_counts_original_period_excluding_bot_and_overlap():
     assert activity.total_messages == 3
     assert activity.participants == 2
     assert activity.members == (ActivityMember("111", "甲", 2), ActivityMember("222", "", 1))
-    assert activity.hourly[16:18] == (2, 1)
+    assert activity.hourly == (2, 1)
+    assert activity.hourly_times == (START, START + 3600)
     assert sum(activity.hourly) == 3
 
 
@@ -55,7 +60,10 @@ def test_activity_deduplicates_and_uses_latest_nonempty_name_in_period():
 def test_activity_timezone_and_multiday_buckets_are_actual_local_hours():
     messages = [message("a", offset=10), message("b", offset=86410)]
     activity = build_activity(messages, START, START + 172800, "UTC")
-    assert activity.hourly[8] == 2
+    assert len(activity.hourly) == 48
+    assert activity.hourly[0] == activity.hourly[24] == 1
+    assert activity.hourly_times[0] == START
+    assert activity.hourly_times[24] == START + 86400
     assert sum(activity.hourly) == 2
 
 
@@ -131,7 +139,7 @@ def test_exact_body_attribution_spans_survive_json_without_changing_plain_text()
         assert item.body[span.start : span.end] == f"“{span.name}”"
     restored = Digest.restore(json.loads(json.dumps(Digest([item]).dump(), ensure_ascii=False))).items[0]
     assert restored == item
-    assert poster_points(item) == [
+    assert [prose(point) for point in poster_points(item)] == [
         {"text": "群友认为有名额。", "authors": (Speaker("111", "长昵称" * 20),)},
         {"text": "群友听说截止了。", "authors": (Speaker("222", "同名"),)},
     ]
@@ -159,15 +167,15 @@ def test_poster_points_preserves_literal_names_and_existing_marker_like_text():
         True,
     )[0]
     points = poster_points(item)
-    assert points[0] == {"text": f"原文标记{literal}", "authors": ()}
+    assert prose(points[0]) == {"text": f"原文标记{literal}", "authors": ()}
     assert points[1]["text"] == "群友反馈可报名。"
     assert points[1]["authors"] == (Speaker("111", "危险<script>u2\ue000</script>"),)
-    assert points[2] == {"text": "字面昵称“其他同学”不应修改。", "authors": ()}
+    assert prose(points[2]) == {"text": "字面昵称“其他同学”不应修改。", "authors": ()}
 
 
 def test_poster_points_old_and_invalid_metadata_preserve_prose():
     item = Item("标题", "群友“旧名字”说有消息。", (), (Speaker("111", "旧名字"),))
-    assert poster_points(item) == [{"text": item.body, "authors": ()}]
+    assert [prose(point) for point in poster_points(item)] == [{"text": item.body, "authors": ()}]
     bad = Item("标题", item.body, (), item.speakers, (Attribution(0, 2, "111", "旧名字"),))
     assert poster_points(bad) == poster_points(item)
 
@@ -207,7 +215,7 @@ def test_poster_preserves_semicolons_inside_quotes_and_parentheses(opening, clos
     assert len(points) == 2
     assert points[0]["text"] == f"群友称{opening}学硕8000；群友认为专硕15000{closing}"
     assert points[0]["authors"] == (Speaker("1", "成员1"), Speaker("2", "成员2"))
-    assert points[1] == {"text": "群友补充学费情况。", "authors": (Speaker("3", "成员3"),)}
+    assert prose(points[1]) == {"text": "群友补充学费情况。", "authors": (Speaker("3", "成员3"),)}
 
 
 def test_poster_preserves_clause_semicolons_and_only_splits_direct_attributed_followup():
@@ -245,3 +253,24 @@ def test_grouped_author_labels_remain_natural_after_shortening():
     points = poster_points(item)
     assert points[0]["text"] == "多位群友反馈：申请条件因学校而异。"
     assert [author.qq for author in points[0]["authors"]] == ["12345", "23456"]
+
+
+def test_inline_segments_keep_each_author_at_their_exact_position():
+    indexed = {"u1": message("a", name="甲"), "u2": message("b", "222", name="乙")}
+    item = resolve_names(
+        [Item("反馈", "群友u1、同学u2提到：甲校有名额；但u1提醒先联系老师。", ())], indexed, True
+    )[0]
+    assert poster_points(item)[0]["segments"] == [
+        {"speaker": Speaker("111", "甲")},
+        {"text": "、"},
+        {"speaker": Speaker("222", "乙")},
+        {"text": "提到：甲校有名额；但"},
+        {"speaker": Speaker("111", "甲")},
+        {"text": "提醒先联系老师。"},
+    ]
+    assert "群友“甲”" in item.body  # Text and merged-forward modes retain their names.
+
+
+def test_inline_segments_never_guess_an_identity_for_unattributed_prose():
+    item = Item("反馈", "群友“甲”提到：甲校有名额。", (), (Speaker("111", "甲"),))
+    assert poster_points(item)[0]["segments"] == [{"text": item.body}]

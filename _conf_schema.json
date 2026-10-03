@@ -194,7 +194,13 @@
                 "description": "展示聊天活跃时段",
                 "type": "bool",
                 "default": true,
-                "hint": "根据本期真实消息显示按小时合计的发言分布。"
+                "hint": "按本次摘要的真实时间顺序显示每小时发言折线，跨天不会合并。"
+              },
+              "followup_text": {
+                "description": "图片发送后附言",
+                "type": "text",
+                "default": "",
+                "hint": "全部图片发完后另发一条文字，例如“鼠群日报，请查收～”。最多 500 字；留空不发送。沿用发送间隔。"
               },
               "excluded_members": {
                 "description": "不参与活跃统计的成员",

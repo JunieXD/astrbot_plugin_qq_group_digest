@@ -2,8 +2,16 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; script-src 'none'; connect-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; script-src 'none'; connect-src 'none'; base-uri 'none'">
 <style>
+@font-face {
+  font-family:"DigestWenKaiScreen";
+  src:url("{{ font_data_url }}") format("woff2");
+  font-style:normal;
+  font-weight:400;
+  font-display:block;
+}
+
 :root {
   --bg:{{ theme.background }};
   --ink:{{ theme.ink }};
@@ -28,7 +36,7 @@ html,body {
 }
 
 body {
-  font-family:"Microsoft YaHei","Noto Sans CJK SC","WenQuanYi Zen Hei","PingFang SC",sans-serif;
+  font-family:"DigestWenKaiScreen",sans-serif;
 }
 
 img {
@@ -71,8 +79,8 @@ body.night {
 }
 
 .group-avatar {
-  width:94px;
-  height:94px;
+  width:135px;
+  height:135px;
   border-radius:28px;
   background:var(--mint);
   flex-shrink:0;
@@ -252,41 +260,46 @@ h1 {
 }
 
 .activity-title {
-  font-size:26px;
+  font-size:30px;
   color:var(--quiet);
-  margin-bottom:14px;
+  margin-bottom:16px;
 }
 
-.bars {
-  display:flex;
-  gap:7px;
-  align-items:flex-end;
-  height:92px;
-  padding:0 3px;
-}
-
-.bar-wrap {
-  flex:1;
-  min-width:0;
-  height:92px;
-  display:flex;
-  align-items:flex-end;
-}
-
-.bar {
+.activity-chart {
+  display:block;
   width:100%;
-  border-radius:6px 6px 0 0;
-  background:var(--accent);
-  opacity:.65;
-  min-height:0;
+  height:auto;
+  overflow:visible;
 }
 
-.chart-labels {
-  display:flex;
-  justify-content:space-between;
+.chart-grid {
+  stroke:var(--line);
+  stroke-width:1.5;
+  stroke-dasharray:5 8;
+}
+
+.chart-line {
+  fill:none;
+  stroke:var(--accent);
+  stroke-width:4;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
+.chart-dot {
+  fill:var(--accent);
+  stroke:var(--bg);
+  stroke-width:2;
+}
+
+.chart-axis {
   font-size:22px;
-  color:var(--quiet);
-  margin-top:8px;
+  fill:var(--quiet);
+}
+
+.chart-date {
+  font-size:22px;
+  fill:var(--accent);
 }
 
 .topics-heading {
@@ -316,11 +329,18 @@ h1 {
 }
 
 .topic-number {
-  font-size:46px;
-  line-height:1.45;
+  width:64px;
+  height:64px;
+  border-radius:20px;
+  background:var(--soft);
+  border:1.5px solid var(--accent);
+  color:var(--accent);
+  font-size:42px;
+  font-weight:700;
+  line-height:64px;
+  text-align:center;
   flex-shrink:0;
-  min-width:56px;
-  font-family:"Noto Color Emoji","Segoe UI Emoji",sans-serif;
+  margin-top:1px;
 }
 
 .topic h2 {
@@ -378,7 +398,7 @@ h1 {
 }
 
 .author {
-  display:flex;
+  display:inline-flex;
   align-items:center;
   gap:9px;
   background:var(--soft);
@@ -386,6 +406,8 @@ h1 {
   padding:6px 15px 6px 6px;
   max-width:100%;
   min-width:0;
+  vertical-align:middle;
+  margin:0 4px;
 }
 
 .author-avatar {
@@ -402,7 +424,7 @@ h1 {
 }
 
 .author-name {
-  font-size:28px;
+  font-size:30px;
   line-height:1.4;
   overflow:hidden;
   text-overflow:ellipsis;
@@ -472,7 +494,7 @@ h1 {
 {%- endmacro %}
 <main class="poster{% if not first_page %} compact{% endif %}">
 <header class="masthead">
-<div class="eyebrow">群 聊 手 记</div>
+<div class="eyebrow">群聊总结</div>
 <div class="hero">
 {% if group_avatar %}<img class="group-avatar" src="{{ group_avatar }}" alt="">{% else %}<div class="group-avatar">✦</div>{% endif %}
 <div class="hero-copy"><h1>{{ title }}</h1>{% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}</div>
@@ -480,19 +502,28 @@ h1 {
 {% if period_label %}<div class="period">{{ period_label }}</div>{% endif %}
 </header>
 {% if first_page %}
-{% if show_stats %}<div class="stats"><div class="stat"><div class="stat-value">{{ stats.message_count }}</div><div class="stat-label">条群消息</div></div><div class="stat"><div class="stat-value">{{ stats.speaker_count }}</div><div class="stat-label">位群友参与</div></div><div class="stat"><div class="stat-value">{{ topic_count }}</div><div class="stat-label">个精选话题</div></div></div>{% endif %}
-{% if leaders %}<section class="leaderboard"><div class="section-title">本期活跃榜 <span class="section-note">按发言次数</span></div><div class="leaders">
+{% if show_stats %}<div class="stats"><div class="stat"><div class="stat-value">{{ stats.message_count }}</div><div class="stat-label">发言次数</div></div><div class="stat"><div class="stat-value">{{ stats.speaker_count }}</div><div class="stat-label">位群友参与</div></div><div class="stat"><div class="stat-value">{{ topic_count }}</div><div class="stat-label">个精选话题</div></div></div>{% endif %}
+{% if leaders %}<section class="leaderboard"><div class="section-title">本期活跃榜 <span class="section-note">发言次数</span></div><div class="leaders">
 {% for person in leaders %}<div class="leader"><div class="rank">{{ person.rank }}</div>{{ portrait(person) }}<div class="leader-info"><div class="leader-name">{{ person.name }}</div><div class="track"><div class="fill" style="width:{{ person.percentage }}%"></div></div></div><div class="leader-count">{{ person.count }}<small>次</small></div></div>{% endfor %}
 </div></section>{% endif %}
-{% if activity %}<section class="activity"><div class="activity-title">各时段发言 · 按小时合计</div><div class="bars">{% for point in activity %}<div class="bar-wrap"><div class="bar" style="height:{{ point.percentage }}%"></div></div>{% endfor %}</div><div class="chart-labels"><span>{{ activity[0].label }}</span>{% if activity|length > 2 %}<span>{{ activity[(activity|length)//2].label }}</span>{% endif %}<span>{{ activity[-1].label }}</span></div></section>{% endif %}
+{% if chart %}<section class="activity"><div class="activity-title">各时段发言</div>
+<svg class="activity-chart" viewBox="0 0 968 236" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="各时段发言折线图">
+<defs><linearGradient id="activity-fade" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="{{ theme.accent }}" stop-opacity="0.25"/><stop offset="100%" stop-color="{{ theme.accent }}" stop-opacity="0.02"/></linearGradient></defs>
+{% for y in [18,86,154] %}<line class="chart-grid" x1="70" x2="958" y1="{{ y }}" y2="{{ y }}"/>{% endfor %}
+<path d="{{ chart.area }}" fill="url(#activity-fade)"/><path class="chart-line" d="{{ chart.line }}"/>
+{% if chart.points|length <= 48 %}{% for point in chart.points %}<circle class="chart-dot" cx="{{ point.x }}" cy="{{ point.y }}" r="4"/>{% endfor %}{% endif %}
+<text class="chart-axis" x="56" y="26" text-anchor="end">{{ chart.maximum }}</text><text class="chart-axis" x="56" y="161" text-anchor="end">0</text>
+{% for point in chart.labels %}<text class="chart-axis" x="{{ point.x }}" y="189" text-anchor="{{ point.anchor }}">{{ point.label }}</text>{% endfor %}
+{% for date in chart.dates %}<text class="chart-date" x="{{ date.x }}" y="225" text-anchor="{{ date.anchor }}">{{ date.label }}</text>{% endfor %}
+</svg></section>{% endif %}
 {% endif %}
-{% if topic_count %}<div class="section-title topics-heading">值得一读 <span class="section-note">{% if pages > 1 %}第 {{ page }} / {{ pages }} 页{% else %}按信息价值排序{% endif %}</span></div>{% endif %}
+{% if topic_count %}<div class="section-title topics-heading">值得一读{% if pages > 1 %}<span class="section-note">第 {{ page }} / {{ pages }} 页</span>{% endif %}</div>{% endif %}
 <section class="topics">
 {% for item in items %}<article class="topic"><div class="topic-heading"><span class="topic-number">{{ item.number }}</span><h2>{{ item.title }}</h2></div><div class="points">
-{% for point in item.points %}<div class="point"><span class="bullet"></span><div><div class="point-copy">{{ point.text }}</div>{% if point.authors %}<div class="point-authors">{% for person in point.authors %}{{ author_chip(person) }}{% endfor %}</div>{% endif %}</div></div>{% endfor %}
+{% for point in item.points %}<div class="point"><span class="bullet"></span><div class="point-copy">{%- for segment in point.segments -%}{% if segment.author %}{{ author_chip(segment.author) }}{% else %}{{ segment.text }}{% endif %}{%- endfor -%}</div></div>{% endfor %}
 </div>{% if item.authors %}<div class="authors"><span class="authors-label">本条发言</span>{% for person in item.authors %}{{ author_chip(person) }}{% endfor %}</div>{% endif %}</article>{% endfor %}
 </section>
-<footer class="footer"><span>{{ subtitle or "群聊手记" }}</span>{% if pages > 1 %}<span>{{ page }} / {{ pages }}</span>{% else %}<span>✦</span>{% endif %}</footer>
+<footer class="footer"><span>{{ subtitle or "群聊总结" }}</span>{% if pages > 1 %}<span>{{ page }} / {{ pages }}</span>{% else %}<span>✦</span>{% endif %}</footer>
 </main>
 </body>
 </html>

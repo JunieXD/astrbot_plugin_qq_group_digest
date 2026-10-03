@@ -50,6 +50,77 @@ def _person(value):
     return {"name": name, "initial": name[:1], "avatar": avatar_url(value.get("avatar_data_url"))}
 
 
+def _point(value):
+    """Preserve author positions inside a sentence, without parsing model HTML."""
+    segments = []
+    if value.get("segments") is not None:
+        for segment in value["segments"]:
+            if segment.get("author"):
+                segments.append({"author": _person(segment["author"]), "text": ""})
+            elif segment.get("text"):
+                segments.append({"author": None, "text": str(segment["text"])})
+    else:
+        # Old previews use a small author list plus a sentence. Keep them
+        # readable while new previews carry the exact positions explicitly.
+        segments.extend({"author": _person(author), "text": ""} for author in value.get("authors", []))
+        if value.get("text"):
+            segments.append({"author": None, "text": str(value["text"])})
+    return {"segments": segments}
+
+
+def _activity_chart(activity):
+    """Build trusted SVG coordinates from chronological, counted buckets."""
+    if not activity:
+        return None
+    left, right, top, baseline = 70, 958, 18, 154
+    maximum = max((point["count"] for point in activity), default=0)
+    scale = maximum or 1
+    points = [
+        {
+            **point,
+            "x": round(left + (right - left) * index / max(1, len(activity) - 1), 2),
+            "y": round(baseline - (baseline - top) * point["count"] / scale, 2),
+        }
+        for index, point in enumerate(activity)
+    ]
+    path = f"M {points[0]['x']},{points[0]['y']}"
+    for previous, point in zip(points, points[1:]):
+        middle = round((previous["x"] + point["x"]) / 2, 2)
+        path += f" C {middle},{previous['y']} {middle},{point['y']} {point['x']},{point['y']}"
+    area = f"{path} L {points[-1]['x']},{baseline} L {points[0]['x']},{baseline} Z"
+    label_count = min(8, len(points))
+    selected = sorted(
+        {round(index * (len(points) - 1) / max(1, label_count - 1)) for index in range(label_count)}
+    )
+    labels = []
+    for index in selected:
+        point = points[index]
+        labels.append(
+            {**point, "anchor": "start" if index == 0 else "end" if index == len(points) - 1 else "middle"}
+        )
+    dates = []
+    previous_end = -1
+    for point in labels:
+        date = point["date_label"]
+        if not date or (dates and date == dates[-1]["label"]):
+            continue
+        width = min(220, len(date) * 22)
+        anchor = "end" if point["x"] + width > right else "start"
+        start = point["x"] - width if anchor == "end" else point["x"]
+        if start < previous_end + 12:
+            continue
+        dates.append({"label": date, "x": point["x"], "anchor": anchor})
+        previous_end = start + width
+    return {
+        "points": points,
+        "line": path,
+        "area": area,
+        "labels": labels,
+        "dates": dates,
+        "maximum": maximum,
+    }
+
+
 def normalize_context(context):
     """Keep model text as text, with a small fixed set of layout options."""
     theme_name = THEME_ALIASES.get(context.get("theme"), context.get("theme", "cream"))
@@ -63,14 +134,10 @@ def normalize_context(context):
             points = [{"text": text, "authors": []} for text in body]
         items.append(
             {
-                "number": "🔟" if index == 9 else "".join(d + "\ufe0f\u20e3" for d in str(index + 1)),
+                "number": index + 1,
                 "index": index,
                 "title": str(raw.get("title") or "话题"),
-                "points": [
-                    {"text": str(p.get("text", "")), "authors": [_person(a) for a in p.get("authors", [])]}
-                    for p in points
-                    if p.get("text")
-                ],
+                "points": [point for point in map(_point, points) if point["segments"]],
                 "authors": [_person(a) for a in raw.get("authors", [])],
             }
         )
@@ -81,15 +148,16 @@ def normalize_context(context):
     for person in leaders:
         person["percentage"] = round(person["count"] / maximum * 100, 2)
     activity = [
-        {"label": str(p.get("label", "")), "count": max(0, int(p.get("count", 0)))}
+        {
+            "label": str(p.get("label", "")),
+            "date_label": str(p.get("date_label", "")),
+            "count": max(0, int(p.get("count", 0))),
+        }
         for p in context.get("activity", [])
     ]
-    maximum = max((p["count"] for p in activity), default=1) or 1
-    for point in activity:
-        point["percentage"] = max(3, round(point["count"] / maximum * 100, 2)) if point["count"] else 0
     stats = context.get("stats") or {}
     return {
-        "title": str(context.get("title") or "群聊手记"),
+        "title": str(context.get("title") or "群聊总结"),
         "subtitle": str(context.get("subtitle") or ""),
         "period_label": str(context.get("period_label") or ""),
         "group_avatar": avatar_url(context.get("group_avatar_data_url")),
@@ -102,6 +170,7 @@ def normalize_context(context):
         "show_stats": bool(stats),
         "leaders": leaders,
         "activity": activity,
+        "chart": _activity_chart(activity),
         "items": items,
         "topic_count": len(items),
     }
@@ -144,9 +213,25 @@ class PosterRenderer:
         self._playwright = None
         self._browser = None
         self._template_text = (Path(__file__).parent / "assets" / "poster.html").read_text(encoding="utf-8")
+        self._font_path = Path(__file__).parent / "assets" / "fonts" / "LXGWWenKaiScreen.woff2"
+        self._font_fingerprint = None
+        self._font_data_url = None
         self._template = None
 
+    def _load_font(self):
+        if self._font_data_url is not None:
+            return
+        try:
+            font_bytes = self._font_path.read_bytes()
+        except OSError as exc:
+            raise PosterRenderError("本地霞鹜文楷字体资源缺失，请重新安装插件字体资源。") from exc
+        if len(font_bytes) < 44 or font_bytes[:4] != b"wOF2":
+            raise PosterRenderError("本地霞鹜文楷字体资源已损坏，请重新安装插件字体资源。")
+        self._font_fingerprint = hashlib.sha256(font_bytes).hexdigest()
+        self._font_data_url = "data:font/woff2;base64," + base64.b64encode(font_bytes).decode("ascii")
+
     def html(self, context, indices=None, *, page=1, pages=1):
+        self._load_font()
         if self._template is None:
             from jinja2 import Environment, StrictUndefined
 
@@ -155,7 +240,9 @@ class PosterRenderer:
         normalized = normalize_context(context)
         if indices is not None:
             normalized["items"] = [normalized["items"][i] for i in indices]
-        return self._template.render(**normalized, page=page, pages=pages, first_page=page == 1)
+        return self._template.render(
+            **normalized, page=page, pages=pages, first_page=page == 1, font_data_url=self._font_data_url
+        )
 
     async def _launch(self):
         if self._browser is not None and self._browser.is_connected():
@@ -178,7 +265,22 @@ class PosterRenderer:
 
     async def _measure(self, page, html):
         await page.set_content(html, wait_until="load")
-        await page.evaluate("document.fonts.ready")
+        font_loaded = await page.evaluate(
+            """async () => {
+                const faces = await document.fonts.load('44px "DigestWenKaiScreen"', '群聊总结');
+                await document.fonts.ready;
+                const avatar = document.querySelector('.group-avatar');
+                const copy = document.querySelector('.hero-copy');
+                for (let i = 0; i < 3; i++) {
+                    const size = Math.min(216, Math.ceil(copy.getBoundingClientRect().height));
+                    avatar.style.width = `${size}px`;
+                    avatar.style.height = `${size}px`;
+                }
+                return faces.some(face => face.status === 'loaded');
+            }"""
+        )
+        if not font_loaded:
+            raise PosterRenderError("本地霞鹜文楷字体加载失败，已停止生成海报，请重新安装插件字体资源。")
         return await page.evaluate(
             """() => ({
                 height: Math.ceil(document.querySelector('.poster').getBoundingClientRect().height),
@@ -192,9 +294,10 @@ class PosterRenderer:
         normalized = normalize_context(context)
         if not normalized["items"]:
             return []
+        self._load_font()
         content_key = json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         fingerprint = hashlib.sha256(
-            f"{WIDTH}|{self.max_height}|{self.max_pages}|{self._template_text}|{content_key}".encode()
+            f"{WIDTH}|{self.max_height}|{self.max_pages}|{self._font_fingerprint}|{self._template_text}|{content_key}".encode()
         ).hexdigest()
         async with self._lock:
             self.cache_dir.mkdir(parents=True, exist_ok=True)

@@ -9,7 +9,8 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from qq_group_digest.config import IMAGE_MODE, DigestError
-from qq_group_digest.models import Digest, Item, Message, Speaker
+from qq_group_digest.models import Activity, Digest, Item, Message, Speaker
+from qq_group_digest.poster_data import decorate_digest
 from qq_group_digest.presentation import Presentation
 from qq_group_digest.preview import Preview, send_preview
 
@@ -102,8 +103,10 @@ async def test_scheduled_poster_keeps_stats_and_reuses_exact_artifact_for_delive
     assert context["stats"] == {"message_count": 1, "speaker_count": 1}
     assert context["leaderboard"][0]["name"] == "小鼠"
     assert context["items"][0]["authors"] == []
-    assert context["items"][0]["body_points"][0]["authors"][0]["name"] == "小鼠"
-    assert context["items"][0]["body_points"][0]["text"] == "群友反馈，甲校补录报名明天截止。"
+    assert context["items"][0]["body_points"][0]["segments"] == [
+        {"author": {"name": "小鼠", "avatar_data_url": "data:image/jpeg;base64,avatar"}},
+        {"text": "反馈，甲校补录报名明天截止。"},
+    ]
     rows = await store.call("deliveries", run["id"])
     uri = rows[0]["payload"]["message"][0]["data"]["file"]
     assert uri.startswith("file://")
@@ -211,6 +214,36 @@ async def test_disabling_avatars_preserves_inline_names_and_skips_download(
     assert context["items"][0]["body_points"] == [
         {"text": "群友“小鼠”反馈，甲校补录报名明天截止。", "authors": []}
     ]
+
+
+async def test_poster_timeline_matches_window_and_never_invents_old_buckets(task, journal, tmp_path):
+    task = replace(task, name="配置中的简称")
+    presenter = presentation(tmp_path, journal)
+    start = 1790921407  # 2026-10-02 14:10:07 Asia/Shanghai
+    end = start + 86400
+    digest = decorate_digest(
+        Digest([Item("标题", "内容", ())], group_name="实际 QQ 群名"),
+        [Message("1", "1", start, "222222222", "内容")],
+        start,
+        end,
+        task.timezone,
+    )
+    context = await presenter.context(task, digest, start, end)
+    assert context["subtitle"] == "实际 QQ 群名"
+    assert context["period_label"] == "10月2日 14:10 — 10月3日 14:10"
+    assert context["activity"][0] == {
+        "label": "14",
+        "date_label": "10月2日",
+        "timestamp": start - 607,
+        "count": 1,
+    }
+    assert len(context["activity"]) == 25
+    assert context["activity"][-1]["date_label"] == "10月3日"
+    assert context["activity"][-1]["label"] == "14"
+    old = Digest(digest.items, activity=Activity(1, 1, (), (0,) * 24))
+    context = await presenter.context(task, old, start, end)
+    assert context["activity"] == []
+    assert context["subtitle"] == f"QQ群 {task.source_group}"
 
 
 async def test_private_image_preview_uses_shared_budget_without_group_publication(

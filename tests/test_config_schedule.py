@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from qq_group_digest.config import DigestError, GenerationOptions, Limits, Pace, Task, parse_settings
-from qq_group_digest.schedule import latest_boundary, next_boundary
+from qq_group_digest.schedule import latest_boundary, next_boundary, poster_period
 
 
 def test_schema_defaults_and_example_match_runtime():
@@ -78,6 +78,14 @@ def test_name_change_preserves_key(task):
     old_snapshot.pop("content_title")
     restored = Task.restore(old_snapshot)
     assert restored.key == task.key and restored.card_title == restored.content_title == ""
+
+
+def test_poster_dates_are_chinese_and_cross_year_is_explicit(task):
+    zone = ZoneInfo(task.timezone)
+    start = datetime(2026, 10, 2, 14, 10, tzinfo=zone).timestamp()
+    assert poster_period(task, start, start + 86400) == "10月2日 14:10 — 10月3日 14:10"
+    start = datetime(2026, 12, 31, 23, 0, tzinfo=zone).timestamp()
+    assert poster_period(task, start, start + 7200) == "2026年12月31日 23:00 — 2027年1月1日 01:00"
 
 
 def test_boundaries_use_scheduled_time_not_execution_time(task):

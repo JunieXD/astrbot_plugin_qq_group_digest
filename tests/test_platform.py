@@ -275,3 +275,100 @@ async def test_plain_message_preserves_napcat_default_timeout(store, settings, j
     adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
     await adapter.transport("send_private_msg", message=[{"type": "text", "data": {"text": "摘要"}}])
     assert "timeout" not in bot.calls[0][1]
+
+
+async def test_actual_group_name_is_cached_across_adapter_reload(store, settings, journal):
+    bot = Bot()
+    bot.result = {"group_id": 123456789, "group_name": "  四非计算机保研群  "}
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    assert await adapter.group_name("123456789") == "四非计算机保研群"
+    assert await adapter.group_name("123456789") == "四非计算机保研群"
+    reloaded = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW + 60)
+    await reloaded.check_connection()
+    assert await reloaded.group_name("123456789") == "四非计算机保研群"
+    assert bot.calls == [("get_group_info", {"group_id": "123456789", "self_id": "111111111"})]
+    bot.result["group_name"] = "新的真实群名"
+    reloaded.clock = lambda: NOW + 86401
+    assert await reloaded.group_name("123456789") == "新的真实群名"
+    assert len(bot.calls) == 2
+
+
+async def test_missing_group_name_is_negative_cached_and_never_invented(store, settings, journal):
+    bot = Bot()
+    bot.result = {"group_id": 123456789}
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    assert await adapter.group_name("123456789") == ""
+    assert await adapter.group_name("123456789") == ""
+    assert len(bot.calls) == 1
+    bot.result["group_name"] = "真实群名"
+    adapter.clock = lambda: NOW + 3601
+    assert await adapter.group_name("123456789") == "真实群名"
+    assert len(bot.calls) == 2
+
+
+async def test_group_name_failure_preserves_previous_actual_name(store, settings, journal):
+    bot = Bot()
+    bot.result = {"group_name": "以前的实际群名"}
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    assert await adapter.group_name("123456789") == "以前的实际群名"
+    adapter.clock = lambda: NOW + 86401
+    bot.result = None
+    assert await adapter.group_name("123456789") == "以前的实际群名"
+    assert await adapter.group_name("123456789") == "以前的实际群名"
+    assert len(bot.calls) == 2
+
+
+async def test_group_name_lookup_deadline_does_not_hold_read_lock(store, settings, journal):
+    import asyncio
+
+    class SlowBot(Bot):
+        async def call_action(self, action, **params):
+            self.calls.append((action, params))
+            await asyncio.sleep(100)
+
+    adapter = Adapter("platform", SlowBot(), store, lambda: settings, journal, clock=lambda: NOW)
+    adapter.GROUP_NAME_TIMEOUT = 0.2
+    assert await adapter.group_name("123456789") == ""
+    assert not adapter.read_lock.locked()
+    assert await adapter.group_name("123456789") == ""
+    assert len(adapter.bot.calls) == 1
+    assert await store.call("get", "read-cooldown:platform", 0) == 0
+
+
+async def test_group_name_caller_cancellation_is_not_a_lookup_failure(store, settings, journal):
+    import asyncio
+
+    started = asyncio.Event()
+
+    class SlowBot(Bot):
+        async def call_action(self, action, **params):
+            started.set()
+            await asyncio.sleep(100)
+
+    adapter = Adapter("platform", SlowBot(), store, lambda: settings, journal, clock=lambda: NOW)
+    pending = asyncio.create_task(adapter.group_name("123456789"))
+    await started.wait()
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert not adapter._group_names
+    assert not adapter.read_lock.locked()
+
+
+async def test_concurrent_group_name_lookups_only_query_once(store, settings, journal):
+    import asyncio
+
+    bot = Bot()
+    bot.result = {"group_name": "真实群名"}
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    assert await asyncio.gather(*[adapter.group_name("123456789") for _ in range(3)]) == ["真实群名"] * 3
+    assert len(bot.calls) == 1
+
+
+async def test_group_name_cache_is_bounded(store, settings, journal):
+    bot = Bot()
+    bot.result = {"group_name": "真实群名"}
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    adapter._group_names.update({f"111111111:{group}": ("旧群名", NOW - 1) for group in range(10000, 10200)})
+    assert await adapter.group_name("123456789") == "真实群名"
+    assert len(adapter._group_names) == 128
