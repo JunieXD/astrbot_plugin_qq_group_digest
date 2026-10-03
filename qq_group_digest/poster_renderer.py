@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .config import DigestError
 from .images import MAX_IMAGE_BYTES
+from .poster_chart import activity_chart
 
 WIDTH = 1080
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
@@ -68,59 +69,6 @@ def _point(value):
     return {"segments": segments}
 
 
-def _activity_chart(activity):
-    """Build trusted SVG coordinates from chronological, counted buckets."""
-    if not activity:
-        return None
-    left, right, top, baseline = 70, 958, 18, 154
-    maximum = max((point["count"] for point in activity), default=0)
-    scale = maximum or 1
-    points = [
-        {
-            **point,
-            "x": round(left + (right - left) * index / max(1, len(activity) - 1), 2),
-            "y": round(baseline - (baseline - top) * point["count"] / scale, 2),
-        }
-        for index, point in enumerate(activity)
-    ]
-    path = f"M {points[0]['x']},{points[0]['y']}"
-    for previous, point in zip(points, points[1:]):
-        middle = round((previous["x"] + point["x"]) / 2, 2)
-        path += f" C {middle},{previous['y']} {middle},{point['y']} {point['x']},{point['y']}"
-    area = f"{path} L {points[-1]['x']},{baseline} L {points[0]['x']},{baseline} Z"
-    label_count = min(8, len(points))
-    selected = sorted(
-        {round(index * (len(points) - 1) / max(1, label_count - 1)) for index in range(label_count)}
-    )
-    labels = []
-    for index in selected:
-        point = points[index]
-        labels.append(
-            {**point, "anchor": "start" if index == 0 else "end" if index == len(points) - 1 else "middle"}
-        )
-    dates = []
-    previous_end = -1
-    for point in labels:
-        date = point["date_label"]
-        if not date or (dates and date == dates[-1]["label"]):
-            continue
-        width = min(220, len(date) * 22)
-        anchor = "end" if point["x"] + width > right else "start"
-        start = point["x"] - width if anchor == "end" else point["x"]
-        if start < previous_end + 12:
-            continue
-        dates.append({"label": date, "x": point["x"], "anchor": anchor})
-        previous_end = start + width
-    return {
-        "points": points,
-        "line": path,
-        "area": area,
-        "labels": labels,
-        "dates": dates,
-        "maximum": maximum,
-    }
-
-
 def normalize_context(context):
     """Keep model text as text, with a small fixed set of layout options."""
     theme_name = THEME_ALIASES.get(context.get("theme"), context.get("theme", "cream"))
@@ -151,6 +99,7 @@ def normalize_context(context):
         {
             "label": str(p.get("label", "")),
             "date_label": str(p.get("date_label", "")),
+            "timestamp": p.get("timestamp"),
             "count": max(0, int(p.get("count", 0))),
         }
         for p in context.get("activity", [])
@@ -170,7 +119,7 @@ def normalize_context(context):
         "show_stats": bool(stats),
         "leaders": leaders,
         "activity": activity,
-        "chart": _activity_chart(activity),
+        "chart": activity_chart(activity, context.get("activity_timezone", "Asia/Shanghai")),
         "items": items,
         "topic_count": len(items),
     }
@@ -295,7 +244,7 @@ class PosterRenderer:
         if not normalized["items"]:
             return []
         self._load_font()
-        content_key = json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        content_key = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         fingerprint = hashlib.sha256(
             f"{WIDTH}|{self.max_height}|{self.max_pages}|{self._font_fingerprint}|{self._template_text}|{content_key}".encode()
         ).hexdigest()

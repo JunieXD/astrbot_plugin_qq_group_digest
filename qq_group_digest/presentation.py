@@ -144,6 +144,7 @@ class Presentation:
             "leaderboard": [{**face(m), "count": m.count} for m in leaders],
             "items": items,
             "activity": activity_points,
+            "activity_timezone": task.timezone,
         }
 
     async def close(self):

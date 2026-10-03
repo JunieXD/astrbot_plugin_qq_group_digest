@@ -14,6 +14,11 @@ DISPLAY_REFERENCE = re.compile(
     r"(?P<url>https?://[^\s<>，。；！？）]+)|\{\{(?P<legacy>[mu][1-9][0-9]*)\}\}"
     r"|(?<![A-Za-z0-9_/{])(?P<speaker>u[1-9][0-9]*)(?![A-Za-z0-9_/}])"
 )
+PERSONAL_ACCOUNT = re.compile(
+    r"(?:群友|同学|网友|成员)(?:们|的)?\s*"
+    r"(?:[“\"「][^”\"」\n]{1,100}[”\"」]\s*)?"
+    r"(?:反馈|分享|建议|讨论|表示|认为|指出|提到|补充|提醒|透露|听说|反映|介绍|询问|问(?!题)|称|说(?!法|明))"
+)
 
 
 def reference_id(match):
@@ -22,6 +27,23 @@ def reference_id(match):
 
 def references(text):
     return [source_id(reference_id(m)) for m in DISPLAY_REFERENCE.finditer(text) if not m["url"]]
+
+
+def missing_attributions(items):
+    """Find anonymous personal accounts without guessing who made a statement.
+
+    Check each independent body paragraph so one signed point cannot conceal
+    another anonymous account. Title-only labels cannot provide a body chip;
+    objective explanations and announcements need no forced author.
+    """
+    return [
+        number
+        for number, item in enumerate(items, 1)
+        if any(
+            PERSONAL_ACCOUNT.search(paragraph) and not references(paragraph)
+            for paragraph in item.body.splitlines()
+        )
+    ]
 
 
 def resolve_names(items, indexed, enabled):

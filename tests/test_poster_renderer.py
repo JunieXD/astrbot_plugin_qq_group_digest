@@ -135,7 +135,15 @@ def test_activity_order_and_tick_limits():
     chart = normalize_context(data)["chart"]
     assert [point["count"] for point in chart["points"]] == list(range(25))
     assert len(chart["labels"]) <= 8
-    assert chart["labels"][0]["label"] == chart["labels"][-1]["label"] == "13"
+    assert [point["label"] for point in chart["labels"]] == [
+        "13:00",
+        "17:00",
+        "21:00",
+        "01:00",
+        "05:00",
+        "09:00",
+        "13:00",
+    ]
     assert [date["label"] for date in chart["dates"]] == ["10月2日", "10月3日"]
     assert " C " in chart["line"]
 

@@ -8,7 +8,7 @@ import json
 import uuid
 from dataclasses import replace
 
-from .attribution import resolve_names
+from .attribution import missing_attributions, resolve_names
 from .config import DigestError
 from .llm_client import LLMClient as LLMClient
 from .llm_client import usable_completion as usable_completion
@@ -60,7 +60,7 @@ class Summarizer:
                 "展示为一条普通聊天消息：优先最有用的信息，正文每主题通常一个简短要点，不另写目录。\n"
             )
         if task.attribute_speakers:
-            instructions += "署名开启：群友说法使用群友u代号，程序填入真实昵称。\n"
+            instructions += "署名开启：群友说法在正文保留原始u代号，如u3反馈；不可只写“群友反馈”。\n"
         else:
             instructions += "无需引用昵称或成员代号，直接写群友反馈、转发信息等；不要输出署名占位符。\n"
         writing = (
@@ -99,10 +99,21 @@ class Summarizer:
                     data["source_speakers"] = aliases
             return data
 
+        def check_attribution(items):
+            missing = missing_attributions(items) if task.attribute_speakers else []
+            if missing:
+                positions = "、".join(map(str, missing[:10]))
+                raise OutputError(
+                    "missing_attribution",
+                    f"第 {positions} 条群友说法缺少正文署名；请从原始聊天确认发言者并保留其u代号，不能猜测。",
+                    items=items,
+                )
+
         async def extract(content, allowed, phase, index=1, total=1):
             nonlocal calls
             marker = merge_marker if phase == "reduce" else "聊天记录："
             prompt = instructions + "\n" + marker + "\n" + content + footer
+            original_prompt = prompt
             if not await asyncio.to_thread(budget.fits, prompt):
                 raise DigestError("摘要输入超过模型预算。")
             key = None
@@ -111,14 +122,22 @@ class Summarizer:
                 if cached:
                     try:
                         result = parse_digest(cached, allowed, task, enforce_budget=False)
+                        check_attribution(result)
                         self.progress(phase="复用已完成摘要", chunk=index, chunks=total, calls=calls)
                         if hasattr(self.client, "journal"):
                             self.client.journal.record(
                                 "摘要结果缓存命中", group=task.source_group, phase=phase
                             )
                         return result
-                    except DigestError:
-                        pass
+                    except DigestError as exc:
+                        if (
+                            isinstance(exc, OutputError)
+                            and exc.code == "missing_attribution"
+                            and hasattr(self.client, "journal")
+                        ):
+                            self.client.journal.record(
+                                "摘要结果缓存署名不足", group=task.source_group, phase=phase
+                            )
             operation = hashlib.sha256((job_id + prompt).encode()).hexdigest()
             for attempt in range(2):
                 if calls >= self.limits.llm_calls_per_run:
@@ -140,6 +159,7 @@ class Summarizer:
                 )
                 try:
                     result = parse_digest(text, allowed, task, enforce_budget=False)
+                    check_attribution(result)
                     # A publication budget is different from JSON/source validity.
                     # Only an indivisibly large item needs semantic rewriting.
                     resolved = resolve_names(result, transcript.sources, task.attribute_speakers)
@@ -160,7 +180,29 @@ class Summarizer:
                         f"\n上次问题：{exc.detail} 请只修复该问题，保留来源、署名、条件与反例。"
                         f"总长度目标 {int(task.summary_chars * 0.75)} 字，不能超过 {task.summary_chars} 字。"
                     )
-                    if exc.items is not None:
+                    if exc.code == "missing_attribution":
+                        # Anonymous prose contains no identity that can be safely
+                        # restored locally. Give the model the original complete
+                        # input once, plus the existing content to annotate.
+                        pending = [{"title": item.title, "body": item.body} for item in exc.items]
+                        repaired = (
+                            original_prompt
+                            + "\n待补署名摘要：\n"
+                            + encode(pending)
+                            + correction
+                            + "仅补正确署名，保留内容与已有u代号；无法确认作者的个人说法可舍弃，不得猜作者。"
+                        )
+                        if not await asyncio.to_thread(budget.fits, repaired):
+                            brief = (
+                                "\n请重新整理：群友说法在正文保留其真实u代号，客观通知无需署名；"
+                                "无法确认作者的个人说法可舍弃，不得猜作者。仅输出items JSON，字段title/body。"
+                            )
+                            repaired = original_prompt + brief
+                            if not await asyncio.to_thread(budget.fits, repaired):
+                                # Replace editorial reminders, never the history.
+                                # The original prompt already fit this budget.
+                                repaired = original_prompt[: -len(footer)] + brief
+                    elif exc.items is not None:
                         reduced = [candidate(item) for item in exc.items]
                         repaired = instructions + correction + "\n待修正摘要：\n" + encode(reduced) + footer
                     else:
