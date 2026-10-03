@@ -15,6 +15,7 @@ from .qq_group_digest.config import DigestError, parse_settings
 from .qq_group_digest.llm_stats import UsageStore
 from .qq_group_digest.pacing import get_guard
 from .qq_group_digest.platform import Router
+from .qq_group_digest.presentation import Presentation
 from .qq_group_digest.preview import Preview, send_preview
 from .qq_group_digest.resources import InstanceLock, Journal
 from .qq_group_digest.service import Service
@@ -50,7 +51,14 @@ class QQGroupDigest(Star):
                 logger.warning("摘要 LLM 统计初始化失败：%s", type(exc).__name__)
             client = LLMClient(self.context, self.store, self.settings, self.journal, self.statistics)
             self.service = Service(
-                self.context, self.settings, self.store, router, guard, client, self.journal
+                self.context,
+                self.settings,
+                self.store,
+                router,
+                guard,
+                client,
+                self.journal,
+                presentation=Presentation(root, self.journal),
             )
             await self.service.start()
             if hasattr(self.context, "register_web_api"):
@@ -143,10 +151,12 @@ class QQGroupDigest(Star):
 
     async def api_preview(self):
         """AstrBot authenticates plugin extensions; the endpoint only returns a preview."""
+        from dataclasses import replace
+
         from astrbot.api.web import request
 
-        from .qq_group_digest.config import identifier
-        from .qq_group_digest.render import full_text, make_payloads
+        from .qq_group_digest.config import MODES, identifier
+        from .qq_group_digest.render import full_text
 
         if not request.username:
             return {"status": "error", "message": "需要管理员身份。"}
@@ -160,6 +170,10 @@ class QQGroupDigest(Star):
             if not isinstance(body, dict):
                 raise DigestError("请求应为 JSON 对象。")
             task = service.settings().find(identifier(body.get("group_id"), "来源群"))
+            if body.get("mode") is not None:
+                if body["mode"] not in MODES:
+                    raise DigestError("请选择有效的展示方式。")
+                task = replace(task, mode=body["mode"])
             if service.lock(task.key).locked():
                 raise DigestError("这个群正在处理，请稍后再试。")
             digest, start, end = await service.preview(task, refresh=body.get("refresh") is True)
@@ -171,9 +185,7 @@ class QQGroupDigest(Star):
                     "start": start,
                     "end": end,
                     "text": full_text(task, digest, start, end),
-                    "payloads": make_payloads(
-                        task, digest, start, end, adapter.account, service.settings().limits
-                    ),
+                    "payloads": await service.payloads(task, digest, start, end, adapter.account),
                 },
             }
         except DigestError as exc:

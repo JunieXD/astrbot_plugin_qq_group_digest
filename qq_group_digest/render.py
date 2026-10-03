@@ -116,6 +116,8 @@ def make_payloads(task, digest, start, end, account, limits, mode=None):
         return []
     title = header(task, start, end)
     complete = full_text(task, digest, start, end)
+    if mode == "图片海报":
+        raise DigestError("图片海报需要先通过本地渲染生成图片。")
     if mode == "普通消息·整篇":
         if len(complete) > limits.message_chars:
             raise DigestError("整篇摘要超过单条消息长度，请缩短摘要或选择分条展示。")
@@ -152,6 +154,10 @@ def make_payloads(task, digest, start, end, account, limits, mode=None):
 
 
 def payload_fingerprint(payload):
+    if any(s.get("type") == "image" for s in payload.get("message", [])):
+        import json
+
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     if "message" in payload:
         texts = [
             "".join(

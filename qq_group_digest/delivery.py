@@ -6,6 +6,7 @@ import time
 
 from .config import Deferred, DigestError, Task
 from .history import normalize, segments
+from .images import image_files, prepare_payload
 from .models import Digest
 from .render import make_payloads, payload_fingerprint
 
@@ -87,6 +88,7 @@ class Delivery:
 
         async def action():
             nonlocal submitted
+            wire_payload = await prepare_payload(row["payload"])
             try:
                 if self.clock() - run["end"] > task.catchup_hours * 3600:
                     await self.store.call("expire_pending", run["id"])
@@ -129,7 +131,7 @@ class Delivery:
                 # The shared guard must know that no write has been attempted.
                 raise self.guard.deferred_error(str(exc)) from exc
             action_name = "send_group_forward_msg" if row["mode"].startswith("合并转发") else "send_group_msg"
-            result = await adapter.transport(action_name, group_id=row["target"], **row["payload"])
+            result = await adapter.transport(action_name, group_id=row["target"], **wire_payload)
             mid = result.get("message_id") if isinstance(result, dict) else None
             if mid is None or isinstance(mid, bool) or not str(mid).lstrip("-").isdigit():
                 raise DigestError("发送接口没有返回有效消息 ID。")
@@ -190,6 +192,14 @@ class Delivery:
         outcomes = []
         for target in dict.fromkeys(r["target"] for r in rows if r["state"] == "unknown"):
             unknown = [r for r in rows if r["target"] == target and r["state"] == "unknown"]
+            for row in unknown:
+                if image_files(row["payload"]):
+                    outcomes.append(
+                        f"群 {target} 第 {row['part'] + 1} 条：图片上传后的标识无法可靠匹配本地文件，请人工核对，保留待核对状态。"
+                    )
+            unknown = [r for r in unknown if not image_files(r["payload"])]
+            if not unknown:
+                continue
             raw_messages = []
             cursor, anchors, generation = None, set(), None
             for _ in range(3):

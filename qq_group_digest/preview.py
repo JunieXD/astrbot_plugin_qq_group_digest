@@ -5,9 +5,9 @@ import math
 from dataclasses import dataclass
 
 from .config import Deferred, DigestError, Task, identifier
+from .images import prepare_payload
 from .models import Digest
 from .platform import RecoveryPending
-from .render import make_payloads
 
 
 @dataclass(frozen=True)
@@ -30,10 +30,9 @@ async def send_preview(service, event, preview, *, notify=None, sleep=asyncio.sl
             raise DigestError("合并转发能力暂不可用，本次预览未发送；请检查 NapCat 状态后重试。")
         mode = "普通消息·整篇"
         service.journal.record("预览按配置改用普通消息", group=task.source_group)
-    payloads = make_payloads(
-        task, preview.digest, preview.start, preview.end, adapter.account, settings.limits, mode
-    )
+    payloads = await service.payloads(task, preview.digest, preview.start, preview.end, adapter.account, mode)
     for index, payload in enumerate(payloads, 1):
+        wire_payload = await prepare_payload(payload)
         submitted = False
         recovery = None
         waits = 0
@@ -63,7 +62,7 @@ async def send_preview(service, event, preview, *, notify=None, sleep=asyncio.sl
                 raise service.guard.deferred_error(str(exc)) from exc
             action_name = "send_private_forward_msg" if mode.startswith("合并转发") else "send_private_msg"
             submitted = True
-            result = await adapter.transport(action_name, user_id=recipient, **payload)
+            result = await adapter.transport(action_name, user_id=recipient, **wire_payload)
             mid = result.get("message_id") if isinstance(result, dict) else None
             if mid is None or isinstance(mid, bool) or not str(mid).lstrip("-").isdigit():
                 raise DigestError("发送接口没有返回有效消息 ID。")

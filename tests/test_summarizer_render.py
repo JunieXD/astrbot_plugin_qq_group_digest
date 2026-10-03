@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from qq_group_digest.config import MODES, DigestError, Limits
+from qq_group_digest.config import TEXT_MODES as MODES
+from qq_group_digest.config import DigestError, Limits
 from qq_group_digest.models import Digest, Item, Message
 from qq_group_digest.render import make_payloads, payload_fingerprint
 from qq_group_digest.summarizer import LLMClient, Summarizer, fingerprint, parse_digest, usable_completion

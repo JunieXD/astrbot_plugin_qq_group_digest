@@ -253,6 +253,11 @@ class Store:
             row["config"].get(k, False) != config.get(k, False)
             for k in ("read_forwards", "forward_limit", "attribute_speakers")
         )
+        # Image statistics need historical member names even with optional
+        # textual attribution disabled. A fetched plain snapshot may lack them.
+        old_names = row["config"].get("attribute_speakers", False) or row["config"].get("mode") == "图片海报"
+        new_names = config.get("attribute_speakers", False) or config.get("mode") == "图片海报"
+        reread = reread or old_names != new_names
         with self.db:
             self.db.execute("UPDATE runs SET config=? WHERE id=?", (encode(config), rid))
             if reread:
@@ -452,3 +457,11 @@ class Store:
                 "DELETE FROM runs WHERE created<? AND status IN ('complete','superseded')",
                 (now - result_days * 86400,),
             )
+
+    def protected_image_files(self):
+        from .images import image_files
+
+        rows = self.db.execute(
+            "SELECT payload FROM deliveries WHERE state NOT IN ('sent','skipped')"
+        ).fetchall()
+        return {uri for row in rows for uri in image_files(json.loads(row[0]))}

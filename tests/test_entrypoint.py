@@ -8,7 +8,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from qq_group_digest.config import MODES
+from qq_group_digest.config import TEXT_MODES as MODES
 
 
 @pytest.fixture

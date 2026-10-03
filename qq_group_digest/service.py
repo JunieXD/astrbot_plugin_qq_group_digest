@@ -6,7 +6,7 @@ import asyncio
 import random
 import time
 
-from .config import Deferred, DigestError, Task
+from .config import IMAGE_MODE, Deferred, DigestError, Task
 from .delivery import Delivery
 from .history import HISTORY_NOTES, HistoryReader
 from .history_cache import HistoryCache
@@ -19,9 +19,12 @@ OWNER = "astrbot_plugin_qq_group_digest"
 
 
 class Service:
-    def __init__(self, context, settings, store, router, guard, client, journal, *, clock=time.time):
+    def __init__(
+        self, context, settings, store, router, guard, client, journal, *, clock=time.time, presentation=None
+    ):
         self.context, self.settings, self.store, self.router = context, settings, store, router
         self.guard, self.client, self.journal, self.clock = guard, client, journal, clock
+        self.presentation = presentation
         self.wake = asyncio.Event()
         self.workers, self.locks = {}, {}
         self.commands = set()
@@ -114,6 +117,8 @@ class Service:
             except (Exception, asyncio.CancelledError) as exc:
                 self.journal.record("定时任务清理失败", error_type=type(exc).__name__)
         self.cron_ids.clear()
+        if self.presentation:
+            await self.presentation.close()
 
     async def ensure_window(self, task, *, manual=False):
         now = self.clock()
@@ -161,6 +166,9 @@ class Service:
                     statistics = getattr(self.client, "statistics", None)
                     if statistics:
                         statistics.maintenance()
+                    if self.presentation:
+                        protected = await self.store.call("protected_image_files")
+                        await asyncio.to_thread(self.presentation.cleanup, protected)
                     self.last_cleanup = self.clock()
             except Exception as exc:
                 self.journal.record("调度异常", error_type=type(exc).__name__)
@@ -239,7 +247,8 @@ class Service:
         digest = await Summarizer(self.client, limits, run_id=run["id"]).summarize(
             task, adapter, messages, run["start"], run["end"], notes, previous
         )
-        payloads = make_payloads(task, digest, run["start"], run["end"], adapter.account, limits)
+        digest = self.with_activity(task, digest, messages, run["start"], run["end"], adapter.account)
+        payloads = await self.payloads(task, digest, run["start"], run["end"], adapter.account)
         deliveries = [
             {"target": target, "part": i, "mode": task.mode, "payload": payload}
             for target in task.targets
@@ -254,6 +263,28 @@ class Service:
         limits = self.settings().limits
         cache = HistoryCache(self.store, limits.history_cache_minutes, self.journal, clock=self.clock)
         return HistoryReader(limits, self.journal, cache=cache)
+
+    def with_activity(self, task, digest, messages, start, end, account):
+        if task.mode != IMAGE_MODE:
+            return digest
+        from .poster_data import decorate_digest
+
+        return decorate_digest(
+            digest,
+            messages,
+            start,
+            end,
+            task.timezone,
+            bot_id=account,
+            excluded_members=task.poster_excluded_members,
+        )
+
+    async def payloads(self, task, digest, start, end, account, mode=None):
+        if self.presentation:
+            return await self.presentation.payloads(
+                task, digest, start, end, account, self.settings().limits, mode
+            )
+        return make_payloads(task, digest, start, end, account, self.settings().limits, mode)
 
     async def preview(self, task, *, notify=None, refresh=False):
         async with self.lock(task.key):
@@ -294,6 +325,7 @@ class Service:
                 digest = await Summarizer(
                     self.client, self.settings().limits, progress=lambda **fields: progress.update(fields)
                 ).summarize(task, adapter, messages, start, end, notes)
+                digest = self.with_activity(task, digest, messages, start, end, adapter.account)
                 self.journal.record("私聊预览完成", group=task.source_group, topics=len(digest.items))
                 return digest, start, end
             except asyncio.CancelledError:

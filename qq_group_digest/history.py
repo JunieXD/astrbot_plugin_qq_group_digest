@@ -160,7 +160,12 @@ class HistoryReader:
                 # NapCat can filter unparseable native messages into an empty array.
                 # That does not establish that the requested boundary was reached.
                 raise IncompleteHistory("历史接口返回空页，无法确认时间范围已经覆盖；可缩短回溯时间后重试。")
-            messages = [normalize(m, task.source_group, include_names=task.attribute_speakers) for m in page]
+            messages = [
+                normalize(
+                    m, task.source_group, include_names=task.attribute_speakers or task.mode == "图片海报"
+                )
+                for m in page
+            ]
             ordered = sorted(messages, key=lambda m: (m.time, m.seq, m.message_id))
             oldest = ordered[0]
             for message in ordered:

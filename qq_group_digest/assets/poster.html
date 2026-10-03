@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; script-src 'none'; connect-src 'none'; base-uri 'none'">
+<style>
+:root {
+  --bg:{{ theme.background }};
+  --ink:{{ theme.ink }};
+  --accent:{{ theme.accent }};
+  --mint:{{ theme.mint }};
+  --card:#fffdf9;
+  --quiet:#62716e;
+  --line:#e5e4db;
+  --soft:#f1e9df;
+}
+
+* {
+  box-sizing:border-box;
+}
+
+html,body {
+  margin:0;
+  padding:0;
+  width:1080px;
+  background:var(--bg);
+  color:var(--ink);
+}
+
+body {
+  font-family:"Microsoft YaHei","Noto Sans CJK SC","WenQuanYi Zen Hei","PingFang SC",sans-serif;
+}
+
+img {
+  object-fit:cover;
+  display:block;
+}
+
+body.night {
+  --card:#233646;
+  --quiet:#b7c5c7;
+  --line:#3c505b;
+  --soft:#324755;
+}
+
+.poster {
+  width:1080px;
+  padding:48px 48px 38px;
+  background:var(--bg);
+}
+
+.masthead {
+  position:relative;
+  border-top:8px solid var(--accent);
+  padding-top:30px;
+  margin-bottom:28px;
+}
+
+.eyebrow {
+  font-size:28px;
+  font-weight:700;
+  letter-spacing:5px;
+  color:var(--accent);
+  margin-bottom:16px;
+}
+
+.hero {
+  display:flex;
+  align-items:flex-start;
+  gap:24px;
+}
+
+.group-avatar {
+  width:94px;
+  height:94px;
+  border-radius:28px;
+  background:var(--mint);
+  flex-shrink:0;
+  font-size:48px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--ink);
+}
+
+.hero-copy {
+  min-width:0;
+  flex:1;
+}
+
+h1 {
+  font-size:60px;
+  line-height:1.35;
+  letter-spacing:-1.5px;
+  margin:0;
+  font-weight:800;
+  overflow-wrap:anywhere;
+}
+
+.subtitle {
+  font-size:30px;
+  margin-top:10px;
+  color:var(--quiet);
+  line-height:1.45;
+}
+
+.period {
+  font-size:27px;
+  line-height:1.55;
+  color:var(--quiet);
+  margin-top:20px;
+  overflow-wrap:anywhere;
+}
+
+.stats {
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:12px;
+  margin:26px 0 30px;
+}
+
+.stat {
+  padding:18px 22px;
+  background:var(--mint);
+  border-radius:22px;
+  min-width:0;
+}
+
+.stat-value {
+  font-size:48px;
+  line-height:1.2;
+  font-weight:800;
+  letter-spacing:-1px;
+}
+
+.stat-label {
+  font-size:26px;
+  margin-top:7px;
+  color:var(--quiet);
+}
+
+.section-title {
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  font-size:38px;
+  font-weight:800;
+  line-height:1.3;
+  margin:0 0 22px;
+  gap:18px;
+}
+
+.section-note {
+  font-size:25px;
+  font-weight:400;
+  color:var(--quiet);
+  white-space:nowrap;
+}
+
+.leaderboard {
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:30px;
+  padding:26px 28px;
+  margin-bottom:28px;
+}
+
+.leaders {
+  display:flex;
+  flex-direction:column;
+  gap:13px;
+}
+
+.leader {
+  display:flex;
+  align-items:center;
+  gap:18px;
+  min-width:0;
+  position:relative;
+}
+
+.rank {
+  width:32px;
+  font-size:30px;
+  font-weight:800;
+  color:var(--accent);
+  text-align:center;
+  flex-shrink:0;
+}
+
+.avatar {
+  width:68px;
+  height:68px;
+  flex-shrink:0;
+  border-radius:50%;
+  background:var(--soft);
+  border:3px solid var(--card);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:30px;
+  color:var(--accent);
+  font-weight:700;
+}
+
+.leader-info {
+  min-width:0;
+  flex:1;
+}
+
+.leader-name {
+  font-size:30px;
+  line-height:1.35;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+
+.track {
+  height:8px;
+  background:var(--soft);
+  border-radius:20px;
+  margin-top:10px;
+  overflow:hidden;
+}
+
+.fill {
+  height:100%;
+  background:var(--accent);
+  border-radius:20px;
+  opacity:.65;
+}
+
+.leader-count {
+  font-size:32px;
+  font-weight:800;
+  min-width:125px;
+  text-align:right;
+  flex-shrink:0;
+}
+
+.leader-count small {
+  font-size:23px;
+  font-weight:400;
+  color:var(--quiet);
+  margin-left:8px;
+}
+
+.activity {
+  margin:8px 0 30px;
+  padding:0 8px;
+}
+
+.activity-title {
+  font-size:26px;
+  color:var(--quiet);
+  margin-bottom:14px;
+}
+
+.bars {
+  display:flex;
+  gap:7px;
+  align-items:flex-end;
+  height:92px;
+  padding:0 3px;
+}
+
+.bar-wrap {
+  flex:1;
+  min-width:0;
+  height:92px;
+  display:flex;
+  align-items:flex-end;
+}
+
+.bar {
+  width:100%;
+  border-radius:6px 6px 0 0;
+  background:var(--accent);
+  opacity:.65;
+  min-height:0;
+}
+
+.chart-labels {
+  display:flex;
+  justify-content:space-between;
+  font-size:22px;
+  color:var(--quiet);
+  margin-top:8px;
+}
+
+.topics-heading {
+  margin-top:8px;
+}
+
+.topics {
+  display:flex;
+  flex-direction:column;
+  gap:26px;
+}
+
+.topic {
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:30px;
+  padding:30px 32px 28px;
+  break-inside:avoid;
+  position:relative;
+}
+
+.topic-heading {
+  display:flex;
+  align-items:flex-start;
+  gap:18px;
+  margin-bottom:23px;
+}
+
+.topic-number {
+  font-size:46px;
+  line-height:1.45;
+  flex-shrink:0;
+  min-width:56px;
+  font-family:"Noto Color Emoji","Segoe UI Emoji",sans-serif;
+}
+
+.topic h2 {
+  font-size:43px;
+  line-height:1.42;
+  font-weight:800;
+  letter-spacing:-.5px;
+  margin:0;
+  overflow-wrap:anywhere;
+  min-width:0;
+}
+
+.points {
+  display:flex;
+  flex-direction:column;
+  gap:19px;
+}
+
+.point {
+  display:grid;
+  grid-template-columns:10px minmax(0,1fr);
+  gap:19px;
+}
+
+.bullet {
+  width:9px;
+  height:9px;
+  background:var(--accent);
+  border-radius:50%;
+  margin-top:27px;
+}
+
+.point-copy {
+  font-size:44px;
+  line-height:1.52;
+  overflow-wrap:anywhere;
+  white-space:pre-wrap;
+  min-width:0;
+}
+
+.authors {
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  margin-top:23px;
+  padding-top:20px;
+  border-top:1px solid var(--line);
+}
+
+.authors-label {
+  font-size:23px;
+  color:var(--quiet);
+  align-self:center;
+  margin-right:5px;
+}
+
+.author {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  background:var(--soft);
+  border-radius:32px;
+  padding:6px 15px 6px 6px;
+  max-width:100%;
+  min-width:0;
+}
+
+.author-avatar {
+  width:48px;
+  height:48px;
+  border-radius:50%;
+  font-size:20px;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  background:var(--mint);
+  flex-shrink:0;
+  color:var(--ink);
+}
+
+.author-name {
+  font-size:28px;
+  line-height:1.4;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  max-width:360px;
+}
+
+.point-authors {
+  display:flex;
+  flex-wrap:wrap;
+  gap:9px;
+  margin-top:10px;
+}
+
+.footer {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  font-size:23px;
+  color:var(--quiet);
+  border-top:1px solid var(--line);
+  padding-top:23px;
+  margin-top:30px;
+  gap:18px;
+}
+
+.compact .masthead {
+  padding-top:20px;
+  margin-bottom:22px;
+}
+
+.compact h1 {
+  font-size:42px;
+}
+
+.compact .hero {
+  gap:16px;
+}
+
+.compact .group-avatar {
+  width:64px;
+  height:64px;
+  border-radius:20px;
+  font-size:32px;
+}
+
+.compact .eyebrow {
+  display:none;
+}
+
+.compact .subtitle {
+  display:none;
+}
+
+.compact .period {
+  margin-top:10px;
+  font-size:24px;
+}
+</style>
+</head>
+<body class="{{ theme_name }}">
+{% macro portrait(person, class_name='avatar') -%}
+{% if person.avatar %}<img class="{{ class_name }}" src="{{ person.avatar }}" alt="">{% else %}<span class="{{ class_name }}">{{ person.initial }}</span>{% endif %}
+{%- endmacro %}
+{% macro author_chip(person) -%}
+<span class="author">{{ portrait(person, 'author-avatar') }}<span class="author-name">{{ person.name }}</span></span>
+{%- endmacro %}
+<main class="poster{% if not first_page %} compact{% endif %}">
+<header class="masthead">
+<div class="eyebrow">群 聊 手 记</div>
+<div class="hero">
+{% if group_avatar %}<img class="group-avatar" src="{{ group_avatar }}" alt="">{% else %}<div class="group-avatar">✦</div>{% endif %}
+<div class="hero-copy"><h1>{{ title }}</h1>{% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}</div>
+</div>
+{% if period_label %}<div class="period">{{ period_label }}</div>{% endif %}
+</header>
+{% if first_page %}
+{% if show_stats %}<div class="stats"><div class="stat"><div class="stat-value">{{ stats.message_count }}</div><div class="stat-label">条群消息</div></div><div class="stat"><div class="stat-value">{{ stats.speaker_count }}</div><div class="stat-label">位群友参与</div></div><div class="stat"><div class="stat-value">{{ topic_count }}</div><div class="stat-label">个精选话题</div></div></div>{% endif %}
+{% if leaders %}<section class="leaderboard"><div class="section-title">本期活跃榜 <span class="section-note">按发言次数</span></div><div class="leaders">
+{% for person in leaders %}<div class="leader"><div class="rank">{{ person.rank }}</div>{{ portrait(person) }}<div class="leader-info"><div class="leader-name">{{ person.name }}</div><div class="track"><div class="fill" style="width:{{ person.percentage }}%"></div></div></div><div class="leader-count">{{ person.count }}<small>次</small></div></div>{% endfor %}
+</div></section>{% endif %}
+{% if activity %}<section class="activity"><div class="activity-title">各时段发言 · 按小时合计</div><div class="bars">{% for point in activity %}<div class="bar-wrap"><div class="bar" style="height:{{ point.percentage }}%"></div></div>{% endfor %}</div><div class="chart-labels"><span>{{ activity[0].label }}</span>{% if activity|length > 2 %}<span>{{ activity[(activity|length)//2].label }}</span>{% endif %}<span>{{ activity[-1].label }}</span></div></section>{% endif %}
+{% endif %}
+{% if topic_count %}<div class="section-title topics-heading">值得一读 <span class="section-note">{% if pages > 1 %}第 {{ page }} / {{ pages }} 页{% else %}按信息价值排序{% endif %}</span></div>{% endif %}
+<section class="topics">
+{% for item in items %}<article class="topic"><div class="topic-heading"><span class="topic-number">{{ item.number }}</span><h2>{{ item.title }}</h2></div><div class="points">
+{% for point in item.points %}<div class="point"><span class="bullet"></span><div><div class="point-copy">{{ point.text }}</div>{% if point.authors %}<div class="point-authors">{% for person in point.authors %}{{ author_chip(person) }}{% endfor %}</div>{% endif %}</div></div>{% endfor %}
+</div>{% if item.authors %}<div class="authors"><span class="authors-label">本条发言</span>{% for person in item.authors %}{{ author_chip(person) }}{% endfor %}</div>{% endif %}</article>{% endfor %}
+</section>
+<footer class="footer"><span>{{ subtitle or "群聊手记" }}</span>{% if pages > 1 %}<span>{{ page }} / {{ pages }}</span>{% else %}<span>✦</span>{% endif %}</footer>
+</main>
+</body>
+</html>

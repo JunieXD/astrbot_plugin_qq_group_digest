@@ -69,12 +69,13 @@
             "description": "摘要如何展示",
             "type": "string",
             "default": "普通消息·整篇",
-            "hint": "合并转发分条：群里一张卡片，点开后多个主题节点。普通分条：群里实际发送多条消息。",
+            "hint": "普通整篇：一条文字。图片海报：本机 HTML/CSS 排版为适合手机阅读的长图，含活跃榜与署名头像；过长时按完整主题分页。其他方式支持文字分条或合并转发。",
             "options": [
               "普通消息·整篇",
               "普通消息·分条",
               "合并转发·整篇",
-              "合并转发·分条"
+              "合并转发·分条",
+              "图片海报"
             ]
           },
           "card_title": {
@@ -87,7 +88,7 @@
             "description": "正文顶部标题",
             "type": "string",
             "default": "",
-            "hint": "点开卡片后摘要最上方的标题，普通消息也使用此项。例如“今日保研精选”。留空为“✨ 任务名称 · 群聊摘要”，与外部标题分别设置。标题下保留时间范围；单行，最多 80 字。"
+            "hint": "文字、转发正文和图片海报顶部的标题。例如“✨ 鼠群日报”。留空为默认标题；单行，最多 80 字。"
           },
           "advanced": {
             "description": "更多设置（默认即可）",
@@ -158,6 +159,54 @@
                 "type": "int",
                 "default": 1200,
                 "hint": "300～12000。普通整篇建议 1600 字；程序自动为标题和排版留空间，最终不超过普通消息单条上限。"
+              }
+            }
+          },
+          "poster": {
+            "description": "图片海报设置",
+            "type": "object",
+            "hint": "仅在展示方式选择“图片海报”时生效，其他设置保持默认即可。",
+            "items": {
+              "theme": {
+                "description": "配色",
+                "type": "string",
+                "default": "cream",
+                "options": [
+                  "cream",
+                  "mint",
+                  "night"
+                ],
+                "hint": "cream 奶油白，mint 薄荷绿，night 夜间蓝。"
+              },
+              "leaderboard_size": {
+                "description": "活跃榜展示几人",
+                "type": "int",
+                "default": 5,
+                "hint": "0 关闭，最多 10 人。按本期发言次数排序；不包含机器人、重叠背景和转发内部消息。"
+              },
+              "show_avatars": {
+                "description": "显示群头像与署名头像",
+                "type": "bool",
+                "default": true,
+                "hint": "头像在本地缓存一天，无法获取时显示占位图。正文署名需同时开启更多设置里的“引用群友说法时保留昵称”。"
+              },
+              "show_activity": {
+                "description": "展示聊天活跃时段",
+                "type": "bool",
+                "default": true,
+                "hint": "根据本期真实消息显示按小时合计的发言分布。"
+              },
+              "excluded_members": {
+                "description": "不参与活跃统计的成员",
+                "type": "list",
+                "default": [],
+                "hint": "每行一个 QQ 号，例如其他机器人。仅影响活跃榜和消息统计，不删除摘要原文。当前机器人自动排除。"
+              },
+              "fallback_to_plain": {
+                "description": "图片生成失败时改发文字",
+                "type": "bool",
+                "default": true,
+                "hint": "仅在图片尚未发送时生效。改发完整的一条普通消息，超出文字上限则暂缓。图片发送超时不会改发或自动重发。"
               }
             }
           }

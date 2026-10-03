@@ -25,7 +25,9 @@ class IncompleteHistory(DigestError):
     pass
 
 
-MODES = ("普通消息·整篇", "普通消息·分条", "合并转发·整篇", "合并转发·分条")
+TEXT_MODES = ("普通消息·整篇", "普通消息·分条", "合并转发·整篇", "合并转发·分条")
+IMAGE_MODE = "图片海报"
+MODES = (*TEXT_MODES, IMAGE_MODE)
 DEFAULT_FOCUS = "提取能帮助群成员增进理解、改进做法或作出判断的具体信息，保留必要条件和来源。结合本期讨论按价值排序，忽略闲聊、广告和重复内容，不凑数。"
 
 
@@ -86,6 +88,12 @@ class Task:
     attribute_speakers: bool = False
     card_title: str = ""
     content_title: str = ""
+    poster_theme: str = "cream"
+    poster_leaderboard_size: int = 5
+    poster_show_avatars: bool = True
+    poster_show_activity: bool = True
+    poster_excluded_members: tuple[str, ...] = ()
+    poster_fallback_to_plain: bool = True
 
     @property
     def key(self):
@@ -107,7 +115,14 @@ class Task:
 
     @classmethod
     def restore(cls, data):
-        return cls(**{**data, "target_groups": tuple(data["target_groups"]), "times": tuple(data["times"])})
+        return cls(
+            **{
+                **data,
+                "target_groups": tuple(data["target_groups"]),
+                "times": tuple(data["times"]),
+                "poster_excluded_members": tuple(data.get("poster_excluded_members", ())),
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -189,6 +204,7 @@ def parse_settings(raw):
     for data in tasks:
         d = obj(data, "摘要任务")
         more = obj(d.get("advanced", {}), "任务高级设置")
+        poster = obj(d.get("poster", {}), "海报设置")
         gid = identifier(d.get("source_group"), "来源群")
         if gid in seen:
             raise DigestError(f"来源群 {gid} 重复；请把多个目标群放在同一条任务中。")
@@ -235,6 +251,19 @@ def parse_settings(raw):
             kw[key] = value.strip()
         for key, default in [("enabled", True), ("include_source", True)]:
             kw[key] = flag(d.get(key, default), key)
+        theme = poster.get("theme", "cream")
+        if not isinstance(theme, str) or theme not in ("cream", "mint", "night"):
+            raise DigestError("海报配色应选择 cream（奶油白）、mint（薄荷绿）或 night（夜间蓝）。")
+        kw["poster_theme"] = theme
+        kw["poster_leaderboard_size"] = number(poster.get("leaderboard_size", 5), "活跃榜人数", 0, 10)
+        for key in ("show_avatars", "show_activity", "fallback_to_plain"):
+            kw["poster_" + key] = flag(poster.get(key, True), "海报 " + key)
+        excluded = poster.get("excluded_members", [])
+        if not isinstance(excluded, list) or len(excluded) > 100:
+            raise DigestError("不参与活跃统计的成员应为 QQ 号列表，最多 100 个。")
+        kw["poster_excluded_members"] = tuple(
+            dict.fromkeys(identifier(q, "不参与统计的 QQ") for q in excluded)
+        )
         for key in ["read_forwards", "fallback_to_plain", "attribute_speakers"]:
             kw[key] = flag(more.get(key, False), key)
         for key, low, high in [
