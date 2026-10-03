@@ -58,7 +58,9 @@ def test_decoded_avatar_is_small_static_and_has_no_metadata(tmp_path):
         assert image.getpixel((80, 80)) == (255, 255, 255)
 
 
-@pytest.mark.parametrize("raw", [b"not an image", b"", b"a" * (512 * 1024 + 1)])
+@pytest.mark.parametrize(
+    "raw", [b"not an image", b"", b"a" * (512 * 1024 + 1)], ids=["invalid", "empty", "oversized"]
+)
 def test_invalid_or_large_download_is_rejected(tmp_path, raw):
     cache = AvatarCache(tmp_path)
     with pytest.raises((ValueError, OSError)):

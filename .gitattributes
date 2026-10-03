@@ -1,1 +1,2 @@
-qq_group_digest/assets/deepseek_v4/*.json linguist-vendored=true linguist-generated=true
+# Official tokenizer hashes require identical bytes on Windows and Linux.
+qq_group_digest/assets/deepseek_v4/*.json text eol=lf linguist-vendored=true linguist-generated=true
