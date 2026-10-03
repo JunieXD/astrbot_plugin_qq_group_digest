@@ -249,3 +249,29 @@ async def test_connection_cache_ignores_dynamic_api_attributes(store, settings, 
     recreated = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
     await recreated.ready_to_send()
     assert recreated._observed is adapter._observed
+
+
+@pytest.mark.parametrize("seconds", [5, 45])
+@pytest.mark.parametrize("action", ["send_group_msg", "send_private_msg"])
+async def test_image_upload_acknowledgement_fits_transport_deadline(
+    store, settings, journal, seconds, action
+):
+    from dataclasses import replace
+
+    settings = replace(settings, limits=replace(settings.limits, api_timeout_seconds=seconds))
+    bot = Bot()
+    bot.result = {"message_id": 123}
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    result = await adapter.transport(action, message=[{"type": "image", "data": {"file": "base64://image"}}])
+    assert result == {"message_id": 123}
+    params = bot.calls[0][1]
+    assert params["self_id"] == "111111111"
+    assert 1000 <= params["timeout"] <= seconds * 1000 - 3000
+    assert params["timeout"] == 42000 if seconds == 45 else params["timeout"] == 2000
+
+
+async def test_plain_message_preserves_napcat_default_timeout(store, settings, journal):
+    bot = Bot()
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    await adapter.transport("send_private_msg", message=[{"type": "text", "data": {"text": "摘要"}}])
+    assert "timeout" not in bot.calls[0][1]

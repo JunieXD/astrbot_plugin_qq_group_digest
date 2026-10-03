@@ -38,7 +38,6 @@ class Presentation:
                             "type": "image",
                             "data": {
                                 "file": path.resolve().as_uri(),
-                                "summary": "[" + (task.content_title or default_title(task)) + "]",
                             },
                         }
                     ]

@@ -86,6 +86,16 @@ class Adapter:
             await self.ready_to_send()
         if self.account:
             params["self_id"] = self.account
+        if action in {"send_group_msg", "send_private_msg"} and any(
+            segment.get("type") == "image"
+            for segment in params.get("message", [])
+            if isinstance(segment, dict)
+        ):
+            # NapCat otherwise estimates its own upload wait. A real poster can
+            # finish after that estimate and return a misleading early timeout.
+            # Its extension accepts milliseconds; leave room inside our outer
+            # transport deadline and still treat uncertain writes as unknown.
+            params.setdefault("timeout", max(1000, self.settings().limits.api_timeout_seconds * 1000 - 3000))
         result = await asyncio.wait_for(
             self.bot.call_action(action=action, **params), self.settings().limits.api_timeout_seconds
         )
