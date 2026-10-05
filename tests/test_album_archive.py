@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import replace
+from datetime import datetime
 
 import pytest
 
@@ -10,6 +11,18 @@ from qq_group_digest.models import Digest, Item
 from .conftest import NOW
 from .test_service import make_service
 from .test_store import make_run
+
+
+def test_chinese_album_description_does_not_use_ansi_datetime_formats(monkeypatch, task):
+    from qq_group_digest import albums
+
+    class AnsiDatetime(datetime):
+        def __format__(self, spec):
+            spec.encode("ascii")  # Legacy Windows strftime cannot encode 年/月/日.
+            return super().__format__(spec)
+
+    monkeypatch.setattr(albums, "datetime", AnsiDatetime)
+    assert albums.album_description(task, NOW - 3600, NOW) == ("2026年09月25日 15:00—2026年09月25日 16:00")
 
 
 class Transport:

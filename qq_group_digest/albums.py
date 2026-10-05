@@ -16,7 +16,14 @@ from .models import Digest
 def album_description(task, start, end):
     zone = ZoneInfo(task.timezone)
     first, last = (datetime.fromtimestamp(stamp, zone) for stamp in (start, end))
-    return f"{first:%Y年%m月%d日 %H:%M}—{last:%Y年%m月%d日 %H:%M}"
+
+    def date_label(value):
+        # Python 3.10 on Windows routes strftime through the active ANSI
+        # locale. Keep Chinese literals outside that API (including f-string
+        # datetime formats) so English Windows can archive Chinese captions.
+        return f"{value.year:04d}年{value.month:02d}月{value.day:02d}日 {value.hour:02d}:{value.minute:02d}"
+
+    return date_label(first) + "—" + date_label(last)
 
 
 def archive_plan(task, digest, start, end, payloads=(), *, targets=None):
