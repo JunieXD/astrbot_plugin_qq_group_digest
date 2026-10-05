@@ -12,9 +12,12 @@ from .render import make_payloads, payload_fingerprint
 
 
 class Delivery:
-    def __init__(self, store, router, guard, settings, journal, allowed, *, clock=time.time):
+    def __init__(
+        self, store, router, guard, settings, journal, allowed, *, clock=time.time, archive_ready=None
+    ):
         self.store, self.router, self.guard = store, router, guard
         self.settings, self.journal, self.allowed, self.clock = settings, journal, allowed, clock
+        self.archive_ready = archive_ready
 
     async def process(self, run):
         task = Task.restore(run["config"])
@@ -29,6 +32,8 @@ class Delivery:
         for target in targets:
             group_rows = [r for r in rows if r["target"] == target]
             if not await self.allowed(task.key, target):
+                continue
+            if self.archive_ready and not await self.archive_ready(run, target):
                 continue
             # Keep order within a target. Other destinations may proceed independently.
             if any(r["state"] in {"submitted", "unknown", "blocked"} for r in group_rows):
@@ -95,6 +100,8 @@ class Delivery:
                     raise Deferred("摘要已超过补报时长，停止投递。")
                 if not await self.allowed(task.key, row["target"]):
                     raise Deferred("任务已暂停或目标群已移除。")
+                if self.archive_ready and not await self.archive_ready(run, row["target"]):
+                    raise Deferred("这个群的相册归档尚未完成，暂缓后续发送。")
                 fresh = await self.router.resolve(task)
                 if fresh is not adapter or fresh.account != run["account"]:
                     raise Deferred("接入发生变化，稍后重新绑定。")
@@ -119,6 +126,8 @@ class Delivery:
                     raise Deferred("机器人在目标群中仍被禁言。", 600)
                 if not await self.allowed(task.key, row["target"]):
                     raise Deferred("任务已暂停或目标群已移除。")
+                if self.archive_ready and not await self.archive_ready(run, row["target"]):
+                    raise Deferred("这个群的相册归档尚未完成，暂缓后续发送。")
                 if self.clock() - run["end"] > task.catchup_hours * 3600:
                     await self.store.call("expire_pending", run["id"])
                     raise Deferred("摘要已超过补报时长，停止投递。")

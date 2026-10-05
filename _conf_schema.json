@@ -162,6 +162,30 @@
               }
             }
           },
+          "album": {
+            "description": "存到群相册",
+            "type": "object",
+            "items": {
+              "enabled": {
+                "description": "自动保存日报图片",
+                "type": "bool",
+                "default": false,
+                "hint": "先将海报保存到下面指定群的相册，再发送该群的日报图片和附言。相册未完成时该群消息等待；私聊预览不会上传。"
+              },
+              "target_groups": {
+                "description": "上传到哪些群",
+                "type": "list",
+                "default": [],
+                "hint": "每行一个群号，最多 20 个。与聊天消息的目标群分别设置；机器人需在这些群内并有相册权限。"
+              },
+              "name": {
+                "description": "相册名称",
+                "type": "string",
+                "default": "鼠群日报",
+                "hint": "使用同名相册，不存在时新建。图片说明自动填写本期起止时间；单行，最多 60 字。"
+              }
+            }
+          },
           "poster": {
             "description": "图片海报设置",
             "type": "object",

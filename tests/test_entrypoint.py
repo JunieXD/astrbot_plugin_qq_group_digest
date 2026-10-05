@@ -217,3 +217,28 @@ async def test_authenticated_web_preview_uses_real_service_without_sending(
     assert result["status"] == "ok" and result["data"]["digest"]["items"]
     assert result["data"]["payloads"] and not api.sent
     assert not service.commands and not service.previews
+
+
+async def test_album_api_requires_admin_and_validates_actions_without_writes(
+    entrypoint, monkeypatch, store, task, settings, journal
+):
+    from .test_service import make_service
+
+    payload = {"group_id": task.source_group}
+    web = ModuleType("astrbot.api.web")
+
+    async def body(**kwargs):
+        return payload
+
+    web.request = SimpleNamespace(username=None, json=body)
+    monkeypatch.setitem(sys.modules, "astrbot.api.web", web)
+    assert (await entrypoint.api_album())["status"] == "error"
+    service, api = make_service(store, settings, journal)
+    entrypoint.service = service
+    web.request.username = "admin"
+    response = await entrypoint.api_album()
+    assert response["status"] == "ok" and "已关闭" in response["data"]["text"]
+    for action in ({}, "执行", "预览"):
+        payload["action"] = action
+        assert (await entrypoint.api_album())["status"] == "error"
+    assert not api.sent and not service.commands

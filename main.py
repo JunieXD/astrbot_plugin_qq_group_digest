@@ -65,6 +65,9 @@ class QQGroupDigest(Star):
                 self.context.register_web_api(
                     "/qq_group_digest/preview", self.api_preview, ["POST"], "管理员群摘要预览"
                 )
+                self.context.register_web_api(
+                    "/qq_group_digest/album", self.api_album, ["POST"], "管理员群相册归档与核对"
+                )
             self.start_error = ""
             logger.info(
                 f"QQ 群聊摘要 v{__version__} 已加载；在配置中添加任务，私聊 /群摘要 预览 群号 后启用。"
@@ -188,6 +191,46 @@ class QQGroupDigest(Star):
                     "payloads": await service.payloads(task, digest, start, end, adapter.account),
                 },
             }
+        except DigestError as exc:
+            return {"status": "error", "message": str(exc)}
+        finally:
+            service.commands.discard(current)
+
+    async def api_album(self):
+        """The authenticated API uses the same validated administrator commands."""
+        from astrbot.api.web import request
+
+        from .qq_group_digest.config import identifier
+
+        if not request.username:
+            return {"status": "error", "message": "需要管理员身份。"}
+        service = self.service
+        if service is None or service.stopping:
+            return {"status": "error", "message": "插件尚未就绪。"}
+        current = asyncio.current_task()
+        service.commands.add(current)
+        try:
+            body = await request.json(default={})
+            if not isinstance(body, dict):
+                raise DigestError("请求应为 JSON 对象。")
+            action = body.get("action", "相册状态")
+            if not isinstance(action, str):
+                raise DigestError("相册操作应为文字。")
+            if action in {"相册状态", "核对相册", "重试相册"}:
+                command = f"{action} {identifier(body.get('group_id'), '来源群')}"
+            elif action in {"归档", "跳过相册"}:
+                import re
+
+                batch = body.get("batch_id")
+                if not isinstance(batch, str) or not re.fullmatch(r"[a-f0-9]{8,20}", batch):
+                    raise DigestError("批次编号无效。")
+                command = f"{action} {batch}"
+                if body.get("target_group") is not None:
+                    command += " " + identifier(body["target_group"], "相册目标群")
+            else:
+                raise DigestError("请选择有效的相册操作。")
+            text = await Commands(service).run(command)
+            return {"status": "ok", "data": {"text": text}}
         except DigestError as exc:
             return {"status": "error", "message": str(exc)}
         finally:

@@ -24,6 +24,11 @@ HELP = """群聊摘要（仅 AstrBot 管理员私聊使用）：
 /群摘要 重试 批次编号
 /群摘要 核对 批次编号
 /群摘要 跳过 批次编号 [目标群号]
+/群摘要 相册状态 来源群号
+/群摘要 重试相册 来源群号
+/群摘要 核对相册 来源群号
+/群摘要 归档 批次编号 [目标群号]
+/群摘要 跳过相册 批次编号 [目标群号]
 预览会调用模型，按配置的展示方式在私聊返回，不推进定时进度。
 执行会处理最近一个计划时点，按配置投递；已处理的批次不会重复生成。
 核对只查历史；跳过会放弃指定批次的生成或尚未完成的投递，不会重新发送。"""
@@ -60,6 +65,24 @@ class Commands:
             return HELP
         if action in {"统计", "记录", "详情", "导出"}:
             return await self.statistics(parts)
+        if action in {"相册状态", "重试相册", "核对相册"} and len(parts) == 2:
+            return await self.albums(parts)
+        if action in {"归档", "跳过相册"} and len(parts) in (2, 3):
+            if not re.fullmatch(r"[a-f0-9]{8,20}", parts[1]):
+                return HELP
+            run = await self.s.store.call("lookup", parts[1])
+            task = self.s.current(run["task"])
+            if task is None:
+                raise DigestError("这个批次的任务已移除。")
+            if self.s.lock(task.key).locked():
+                raise DigestError("这个群的任务仍在运行，请稍后再处理相册。")
+            target = identifier(parts[2], "相册目标群") if len(parts) == 3 else None
+            async with self.s.lock(task.key):
+                if action == "归档":
+                    return await self.s.album.plan_existing(run, task, target)
+                count = await self.s.store.call("archive_skip", run["id"], target)
+                self.s.journal.record("管理员跳过群相册", run=run["id"], target=target, count=count)
+                return f"已跳过 {count} 张群相册归档图片。"
         if action == "状态" and len(parts) in (1, 2):
             tasks = (
                 [self.s.settings().find(identifier(parts[1], "来源群"))]
@@ -156,6 +179,57 @@ class Commands:
                 self.s.journal.record("管理员跳过投递", run=run["id"], target=target)
                 return "已跳过指定批次的生成或尚未完成的投递。"
         return HELP
+
+    async def albums(self, parts):
+        action = parts[0]
+        task = self.s.settings().find(identifier(parts[1], "来源群"))
+        if action != "相册状态":
+            if self.s.lock(task.key).locked():
+                raise DigestError("这个群的任务仍在运行，请稍后再处理相册。")
+            async with self.s.lock(task.key):
+                if action == "核对相册":
+                    return await self.s.album.reconcile(task)
+                attention, total = await self.s.store.call("archive_attention", task.key, 100)
+                count = sum(
+                    [
+                        await self.s.store.call("archive_retry", rid)
+                        for rid in dict.fromkeys(row["run"] for row in attention)
+                    ]
+                )
+                self.s.wake.set()
+                return f"已恢复 {count} 张准备失败的图片；结果不明的上传需先核对相册。"
+        recent = await self.s.store.call("latest", task.key, 3)
+        attention, total = await self.s.store.call("archive_attention", task.key)
+        rows = list(
+            {
+                row["id"]: row
+                for row in [
+                    *attention,
+                    *[r for run in recent for r in await self.s.store.call("archive_rows", run["id"])],
+                ]
+            }.values()
+        )
+        result = [
+            f"{task.label}：群相册归档{'已开启' if task.album_enabled else '已关闭'}",
+            f"相册：{task.album_name}；目标群：{'、'.join(task.album_target_groups) or '未配置'}",
+        ]
+        labels = {
+            **LABELS,
+            "pending": "待上传",
+            "render": "等待海报",
+            "uploaded": "已归档",
+            "blocked": "准备失败",
+        }
+        for row in rows[:15]:
+            result.append(
+                f"{row['run'][:12]} · 群 {row['target']} · 第 {row['part'] + 1} 张：{labels[row['state']]}"
+                + (f"（{row['error']}）" if row["error"] else "")
+            )
+        if total:
+            result.append(
+                f"共 {total} 张需要处理。使用「重试相册」恢复准备失败，或「核对相册」查询未知结果。"
+            )
+        return "\n".join(result)
 
     async def statistics(self, parts):
         from .llm_stats import format_call_detail, format_statistics

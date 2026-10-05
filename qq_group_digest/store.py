@@ -8,6 +8,8 @@ import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
+from .album_store import SCHEMA as ALBUM_SCHEMA
+from .album_store import AlbumStore
 from .config import Deferred, DigestError
 
 
@@ -20,6 +22,7 @@ class Store:
         self.path = path
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qq-digest-db")
         self.closed = False
+        self.albums = AlbumStore(self)
 
     async def call(self, method, *args):
         if self.closed:
@@ -57,9 +60,10 @@ class Store:
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute("PRAGMA foreign_keys=ON")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1):
+        if version not in (0, 1, 2):
             raise DigestError("摘要数据库来自较新版本，请升级插件。")
-        self.db.executescript("""
+        self.db.executescript(
+            """
             CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY, task TEXT NOT NULL, start INTEGER, end INTEGER,
@@ -89,11 +93,17 @@ class Store:
             CREATE TABLE IF NOT EXISTS result_cache (
                 key TEXT PRIMARY KEY, value TEXT NOT NULL, expires REAL NOT NULL
             );
-            PRAGMA user_version=1;
-        """)
+        """
+            + ALBUM_SCHEMA
+            + "PRAGMA user_version=2;"
+        )
         with self.db:
             self.db.execute(
                 "UPDATE deliveries SET state='unknown', error='发送过程中插件退出，需要核对' WHERE state='submitted'"
+            )
+            self.db.execute(
+                "UPDATE archives SET state='unknown',error='群相册写入过程中插件退出，需要核对' "
+                "WHERE state='submitted'"
             )
 
     def close_db(self):
@@ -255,15 +265,23 @@ class Store:
         )
         # Image statistics need historical member names even with optional
         # textual attribution disabled. A fetched plain snapshot may lack them.
-        old_names = row["config"].get("attribute_speakers", False) or row["config"].get("mode") == "图片海报"
-        new_names = config.get("attribute_speakers", False) or config.get("mode") == "图片海报"
+        old_names = (
+            row["config"].get("attribute_speakers", False)
+            or row["config"].get("mode") == "图片海报"
+            or row["config"].get("album_enabled", False)
+        )
+        new_names = (
+            config.get("attribute_speakers", False)
+            or config.get("mode") == "图片海报"
+            or config.get("album_enabled", False)
+        )
         reread = reread or old_names != new_names
         with self.db:
             self.db.execute("UPDATE runs SET config=? WHERE id=?", (encode(config), rid))
             if reread:
                 self.db.execute("UPDATE runs SET snapshot=NULL,status='queued' WHERE id=?", (rid,))
 
-    def generated(self, rid, digest, deliveries):
+    def generated(self, rid, digest, deliveries, archives=()):
         with self.db:
             row = self.run(rid)
             if row["status"] not in ("queued", "fetched"):
@@ -285,6 +303,46 @@ class Store:
                         encode(delivery["payload"]),
                     ),
                 )
+            self.albums.insert(rid, archives)
+
+    def archive_active(self, task_key, now):
+        return self.albums.active(task_key, now)
+
+    def archive_rows(self, rid):
+        return self.albums.rows(rid)
+
+    def archive_plan(self, rid, archives):
+        return self.albums.plan(rid, archives)
+
+    def archive_materialize(self, rid, files):
+        return self.albums.materialize(rid, files)
+
+    def archive_submit(self, aid, account, now, limit, receipt=None, album_id=""):
+        return self.albums.submit(aid, account, now, limit, receipt, album_id)
+
+    def archive_created(self, aid, album_id):
+        return self.albums.created(aid, album_id)
+
+    def archive_result(self, aid, state, album_id="", receipt=None, error="", next_try=0):
+        return self.albums.result(aid, state, album_id, receipt, error, next_try)
+
+    def archive_defer(self, aid, error, next_try, max_attempts, count=True):
+        return self.albums.defer(aid, error, next_try, max_attempts, count)
+
+    def archive_cancel_removed(self, task_key, targets):
+        return self.albums.cancel_removed(task_key, targets)
+
+    def archive_retry(self, rid):
+        return self.albums.retry(rid)
+
+    def archive_skip(self, rid, target=None):
+        return self.albums.skip(rid, target)
+
+    def archive_attention(self, task_key, limit=5):
+        return self.albums.attention(task_key, limit)
+
+    def archive_unknown(self, task_key, limit=5):
+        return self.albums.unknown(task_key, limit)
 
     def fail(self, rid, error, next_try, max_attempts, count=True):
         with self.db:
@@ -449,12 +507,16 @@ class Store:
             self.db.execute("DELETE FROM result_cache WHERE expires<=?", (now,))
             self.db.execute("DELETE FROM budget WHERE at<?", (now - 86401,))
             self.db.execute(
-                "UPDATE runs SET snapshot=NULL WHERE created<? AND status IN ('complete','failed','generated')",
+                "UPDATE runs SET snapshot=NULL WHERE created<? AND status IN ('complete','failed','generated') "
+                "AND NOT EXISTS (SELECT 1 FROM archives WHERE run=runs.id "
+                "AND state NOT IN ('uploaded','sent','skipped'))",
                 (now - snapshot_days * 86400,),
             )
             # Unresolved sends keep their evidence even beyond ordinary retention.
             self.db.execute(
-                "DELETE FROM runs WHERE created<? AND status IN ('complete','superseded')",
+                "DELETE FROM runs WHERE created<? AND status IN ('complete','superseded') "
+                "AND NOT EXISTS (SELECT 1 FROM archives WHERE run=runs.id "
+                "AND state NOT IN ('uploaded','sent','skipped'))",
                 (now - result_days * 86400,),
             )
 
@@ -464,4 +526,9 @@ class Store:
         rows = self.db.execute(
             "SELECT payload FROM deliveries WHERE state NOT IN ('sent','skipped')"
         ).fetchall()
-        return {uri for row in rows for uri in image_files(json.loads(row[0]))}
+        album_files = self.db.execute(
+            "SELECT file FROM archives WHERE file<>'' AND state NOT IN ('uploaded','sent','skipped')"
+        ).fetchall()
+        return {uri for row in rows for uri in image_files(json.loads(row[0]))} | {
+            row[0] for row in album_files
+        }

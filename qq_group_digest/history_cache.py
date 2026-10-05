@@ -19,7 +19,7 @@ class HistoryCache:
             adapter.pid,
             adapter.account,
             task.source_group,
-            task.attribute_speakers or task.mode == "图片海报",
+            task.attribute_speakers or task.mode == "图片海报" or task.album_enabled,
         )
         return hashlib.sha256(json.dumps(parts).encode()).hexdigest()
 

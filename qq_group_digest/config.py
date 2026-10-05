@@ -95,6 +95,9 @@ class Task:
     poster_excluded_members: tuple[str, ...] = ()
     poster_fallback_to_plain: bool = True
     poster_followup_text: str = ""
+    album_enabled: bool = False
+    album_target_groups: tuple[str, ...] = ()
+    album_name: str = "鼠群日报"
 
     @property
     def key(self):
@@ -122,6 +125,7 @@ class Task:
                 "target_groups": tuple(data["target_groups"]),
                 "times": tuple(data["times"]),
                 "poster_excluded_members": tuple(data.get("poster_excluded_members", ())),
+                "album_target_groups": tuple(data.get("album_target_groups", ())),
             }
         )
 
@@ -206,6 +210,7 @@ def parse_settings(raw):
         d = obj(data, "摘要任务")
         more = obj(d.get("advanced", {}), "任务高级设置")
         poster = obj(d.get("poster", {}), "海报设置")
+        album = obj(d.get("album", {}), "群相册设置")
         gid = identifier(d.get("source_group"), "来源群")
         if gid in seen:
             raise DigestError(f"来源群 {gid} 重复；请把多个目标群放在同一条任务中。")
@@ -273,6 +278,23 @@ def parse_settings(raw):
         kw["poster_excluded_members"] = tuple(
             dict.fromkeys(identifier(q, "不参与统计的 QQ") for q in excluded)
         )
+        kw["album_enabled"] = flag(album.get("enabled", False), "存到群相册")
+        album_targets = album.get("target_groups", [])
+        if not isinstance(album_targets, list) or len(album_targets) > 20:
+            raise DigestError("上传到哪些群应逐条填写群号，最多 20 个。")
+        kw["album_target_groups"] = tuple(dict.fromkeys(identifier(q, "相册目标群") for q in album_targets))
+        album_name = album.get("name", "鼠群日报")
+        if (
+            not isinstance(album_name, str)
+            or len(album_name.strip()) > 60
+            or any(ord(c) < 32 or 127 <= ord(c) < 160 or c in "\u2028\u2029" for c in album_name)
+        ):
+            raise DigestError("群相册名称应为单行文字，最多 60 字。")
+        kw["album_name"] = album_name.strip()
+        if kw["album_enabled"] and not kw["album_target_groups"]:
+            raise DigestError("开启存到群相册后，请填写至少一个相册目标群。")
+        if kw["album_enabled"] and not kw["album_name"]:
+            raise DigestError("开启存到群相册后，请填写相册名称。")
         for key in ["read_forwards", "fallback_to_plain", "attribute_speakers"]:
             kw[key] = flag(more.get(key, False), key)
         for key, low, high in [

@@ -7,6 +7,7 @@ import random
 import time
 from dataclasses import replace
 
+from .albums import AlbumArchive, archive_plan
 from .config import IMAGE_MODE, Deferred, DigestError, Task
 from .delivery import Delivery
 from .history import HISTORY_NOTES, HistoryReader
@@ -35,7 +36,10 @@ class Service:
         self.stop_task = None
         self.stopping = False
         self.last_cleanup = 0
-        self.delivery = Delivery(store, router, guard, settings, journal, self.allowed, clock=clock)
+        self.album = AlbumArchive(self)
+        self.delivery = Delivery(
+            store, router, guard, settings, journal, self.allowed, clock=clock, archive_ready=self.album.ready
+        )
 
     def lock(self, key):
         return self.locks.setdefault(key, asyncio.Lock())
@@ -214,6 +218,7 @@ class Service:
                                 if live is not None and target not in live.targets:
                                     await self.store.call("remove_target", run["id"], target)
                                     self.journal.record("目标已移除", run=run["id"], target=target)
+                            await self.album.process(current)
                             await self.delivery.process(run)
                     except Deferred as exc:
                         await self.store.call(
@@ -233,6 +238,7 @@ class Service:
                         self.journal.record(
                             "摘要处理失败", run=run["id"], reason=safe, error_type=type(exc).__name__
                         )
+                await self.album.process(current)
             except Exception as exc:
                 self.journal.record("群任务异常", group=current.source_group, error_type=type(exc).__name__)
 
@@ -255,9 +261,14 @@ class Service:
             for target in task.targets
             for i, payload in enumerate(payloads)
         ]
-        await self.store.call("generated", run["id"], digest.dump(), deliveries)
+        archives = archive_plan(task, digest, run["start"], run["end"], payloads)
+        await self.store.call("generated", run["id"], digest.dump(), deliveries, archives)
         self.journal.record(
-            "摘要生成完成", run=run["id"], topics=len(digest.items), deliveries=len(deliveries)
+            "摘要生成完成",
+            run=run["id"],
+            topics=len(digest.items),
+            deliveries=len(deliveries),
+            archives=len(archives),
         )
 
     def history_reader(self):
@@ -266,7 +277,7 @@ class Service:
         return HistoryReader(limits, self.journal, cache=cache)
 
     def with_activity(self, task, digest, messages, start, end, account):
-        if task.mode != IMAGE_MODE:
+        if task.mode != IMAGE_MODE and not task.album_enabled:
             return digest
         from .poster_data import decorate_digest
 
@@ -282,7 +293,7 @@ class Service:
 
     async def with_metadata(self, task, digest, messages, start, end, adapter):
         digest = self.with_activity(task, digest, messages, start, end, adapter.account)
-        if task.mode != IMAGE_MODE:
+        if task.mode != IMAGE_MODE and not task.album_enabled:
             return digest
         name_reader = getattr(adapter, "group_name", None)
         name = await name_reader(task.source_group) if callable(name_reader) else ""

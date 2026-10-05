@@ -162,7 +162,9 @@ class HistoryReader:
                 raise IncompleteHistory("历史接口返回空页，无法确认时间范围已经覆盖；可缩短回溯时间后重试。")
             messages = [
                 normalize(
-                    m, task.source_group, include_names=task.attribute_speakers or task.mode == "图片海报"
+                    m,
+                    task.source_group,
+                    include_names=task.attribute_speakers or task.mode == "图片海报" or task.album_enabled,
                 )
                 for m in page
             ]
