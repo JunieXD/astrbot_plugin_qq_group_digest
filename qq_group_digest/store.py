@@ -354,6 +354,28 @@ class Store:
                 (rid, max_attempts),
             )
 
+    def resume_history_start_failure(self, task, boundary):
+        """One upgrade retry of the current unread stalled batch, never deliveries."""
+        marker = "history-start-v1-recovery:" + task
+        with self.db:
+            if self.get(marker, False):
+                return None
+            self.db.execute("INSERT OR REPLACE INTO state VALUES(?,?)", (marker, "true"))
+            row = self.db.execute(
+                "SELECT id FROM runs WHERE task=? AND end=? AND status='failed'"
+                " AND snapshot IS NULL AND digest IS NULL"
+                " AND error='历史翻页没有继续前进，已停止本期处理。'"
+                " AND NOT EXISTS(SELECT 1 FROM deliveries WHERE run=runs.id)"
+                " AND NOT EXISTS(SELECT 1 FROM archives WHERE run=runs.id)",
+                (task, boundary),
+            ).fetchone()
+            if row is None:
+                return None
+            self.db.execute(
+                "UPDATE runs SET status='queued',failures=0,next_try=0,error='' WHERE id=?", (row["id"],)
+            )
+            return row["id"]
+
     def retry(self, rid):
         row = self.run(rid)
         if row["status"] == "generated":

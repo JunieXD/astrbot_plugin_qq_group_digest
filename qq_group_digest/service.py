@@ -71,6 +71,12 @@ class Service:
                 if not task.enabled:
                     continue
                 await self.store.call("baseline", task.key, latest_boundary(task, self.clock()))
+                if await self.allowed(task.key):
+                    resumed = await self.store.call(
+                        "resume_history_start_failure", task.key, latest_boundary(task, self.clock())
+                    )
+                    if resumed:
+                        self.journal.record("历史起点修复后重试本期", run=resumed, group=task.source_group)
                 for stamp in task.times:
                     hour, minute = map(int, stamp.split(":"))
                     job = await manager.add_basic_job(

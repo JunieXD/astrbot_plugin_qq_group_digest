@@ -1,7 +1,7 @@
 name: astrbot_plugin_qq_group_digest
 desc: 定时读取 QQ 群历史，用已有模型提取有用信息，按群投递摘要，并可自动保存日报到群相册。
 help: 在配置中添加来源群，私聊 /群摘要 预览 群号，确认效果后开启定时摘要。私聊 /群摘要 查看帮助。
-version: v0.4.0
+version: v0.4.1
 author: JunieXD
 repo: https://github.com/JunieXD/astrbot_plugin_qq_group_digest
 display_name: QQ 群聊摘要

@@ -14,7 +14,8 @@ from .models import Message
 PARTIAL_FORWARD_NOTE = "部分合并转发未完整展开。"
 SKIPPED_FORWARD_NOTE = "本期未展开合并转发内容。"
 MEDIA_NOTE = "摘要依据可读取的文字；图片、语音和视频正文未识别。"
-HISTORY_NOTES = frozenset((PARTIAL_FORWARD_NOTE, SKIPPED_FORWARD_NOTE, MEDIA_NOTE))
+HISTORY_START_NOTE = "已到当前账号可读取的历史起点，本期依据实际可读取的消息整理。"
+HISTORY_NOTES = frozenset((PARTIAL_FORWARD_NOTE, SKIPPED_FORWARD_NOTE, MEDIA_NOTE, HISTORY_START_NOTE))
 
 
 def segments(value):
@@ -140,6 +141,8 @@ class HistoryReader:
         crossed = False
         generation = None
         read_start = start
+        coverage_start = start
+        reached_history_start = False
         captured = self.cache.clock() if self.cache else time.time()
         if self.cache:
             if refresh:
@@ -195,6 +198,25 @@ class HistoryReader:
             next_cursor = oldest.message_id
             position = (oldest.time, oldest.seq)
             if next_cursor in anchors or (previous is not None and position > previous):
+                confirm = getattr(adapter, "confirm_history_start", None)
+                if (
+                    next_cursor == cursor
+                    and len(messages) == 1
+                    and callable(confirm)
+                    and await confirm(task.source_group, oldest, self.limits.page_size, generation=generation)
+                ):
+                    crossed = reached_history_start = True
+                    # Missing time before this point is not reusable as full coverage.
+                    coverage_start = max(start, oldest.time)
+                    self.journal.record(
+                        "可读取历史起点已确认",
+                        group=task.source_group,
+                        oldest_time=oldest.time,
+                        oldest_seq=oldest.seq,
+                        requested_start=start,
+                        messages=len(found),
+                    )
+                    break
                 raise IncompleteHistory("历史翻页没有继续前进，已停止本期处理。")
             anchors.add(next_cursor)
             cursor, previous = next_cursor, position
@@ -204,8 +226,9 @@ class HistoryReader:
         if self.cache:
             # Persist only verified coverage and unexpanded text. Failed enrichment/model
             # calls can reuse it; failed pagination never replaces a complete snapshot.
-            await self.cache.save(adapter, task, start, end, messages, captured)
-        notes = []
+            if coverage_start < end:
+                await self.cache.save(adapter, task, coverage_start, end, messages, captured)
+        notes = [HISTORY_START_NOTE] if reached_history_start else []
         if task.read_forwards:
             for message in messages:
                 await forwards.collect(message)

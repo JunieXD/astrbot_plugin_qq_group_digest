@@ -251,6 +251,25 @@ class Adapter:
             raise DigestError("历史接口没有返回有效的消息列表。")
         return data["messages"]
 
+    async def confirm_history_start(self, group, anchor, count, *, generation):
+        """Confirm the accessible boundary of NapCat's inclusive history cursor.
+
+        An empty page or repeated multi-message page cannot prove the boundary.
+        A narrow and a wider backwards query must both return only the same
+        anchor, through the same account/connection and ordinary read budget.
+        """
+        from .history import normalize
+
+        identity = (anchor.message_id, anchor.time, anchor.seq, anchor.sender)
+        for size in (2, min(200, max(20, count * 2))):
+            page = await self.history_page(group, size, anchor.message_id, generation=generation)
+            if len(page) != 1:
+                return False
+            found = normalize(page[0], group)
+            if (found.message_id, found.time, found.seq, found.sender) != identity:
+                return False
+        return True
+
     async def refresh_forward(self, group, native_id):
         # Native 64-bit identifiers must remain strings (JS Numbers lose precision).
         page = await self.history_page(group, 1, native_id)
