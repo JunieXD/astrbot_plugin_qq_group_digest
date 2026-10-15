@@ -9,23 +9,29 @@
     "description": "摘要任务",
     "type": "template_list",
     "default": [],
-    "hint": "一个来源群添加一条；不同群可以选择不同模型、时间和展示方式。",
+    "hint": "一条任务生成一份摘要；可把多个群的内容一起总结，再投递到指定群。",
     "templates": {
       "task": {
-        "name": "添加一个来源群",
+        "name": "添加摘要任务",
         "display_item": "source_group",
         "items": {
           "name": {
             "description": "任务名称",
             "type": "string",
             "default": "",
-            "hint": "方便辨认，例如“保研资讯”；改名保留进度。"
+            "hint": "方便辨认，例如“鼠群”；多个来源聚合时也作为海报副标题。改名保留进度。"
           },
           "source_group": {
-            "description": "从哪个群提取信息",
+            "description": "来源群",
             "type": "string",
             "default": "",
-            "hint": "填写来源群号；机器人需要已在群内。一个来源群只添加一条任务。"
+            "hint": "填写主来源群号；机器人需要已在群内。多个群一起总结时，在下方填写其他群。留空模型跟随此群，海报使用此群头像。"
+          },
+          "additional_source_groups": {
+            "description": "一起总结的其他群",
+            "type": "list",
+            "default": [],
+            "hint": "可留空；每行一个群号，最多9个。所有来源群按同一时间段聚合、去重、统一总结，活跃统计合并。机器人需要在每个群内。"
           },
           "enabled": {
             "description": "启用这条任务",
@@ -39,9 +45,10 @@
             "hint": "每行一个群号；可以留空并开启同时发到来源群。机器人需要能在目标群发言。"
           },
           "include_source": {
-            "description": "同时发到来源群",
+            "description": "同时发到所有来源群",
             "type": "bool",
-            "default": true
+            "default": true,
+            "hint": "聚合多个群时，向每个来源群发送同一份摘要，不重复生成。"
           },
           "times": {
             "description": "每天什么时候发送",

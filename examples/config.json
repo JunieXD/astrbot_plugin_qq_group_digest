@@ -30,7 +30,8 @@
         "fallback_to_plain": false,
         "max_topics": 8,
         "summary_chars": 1200
-      }
+      },
+      "additional_source_groups": []
     }
   ],
   "limits": {

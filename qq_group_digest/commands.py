@@ -97,7 +97,7 @@ class Commands:
                 active = await self.s.allowed(task.key)
                 due = next_boundary(task, self.s.clock())
                 result.append(
-                    f"{task.label}（{task.source_group}）：{'已启用' if active else '已暂停/未启用'}\n"
+                    f"{task.label}（{'、'.join(task.sources)}）：{'已启用' if active else '已暂停/未启用'}\n"
                     f"下一计划时间：{period_text(task, due, due).split('—')[0]}（{task.timezone}）"
                 )
                 progress = self.s.previews.get(task.key)

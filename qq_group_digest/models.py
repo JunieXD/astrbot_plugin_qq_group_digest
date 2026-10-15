@@ -12,6 +12,7 @@ class Message:
     forward_ids: list[str] = field(default_factory=list)
     sender_name: str = ""
     reply_ids: list[str] = field(default_factory=list)
+    group_id: str = ""
 
     def dump(self):
         return asdict(self)

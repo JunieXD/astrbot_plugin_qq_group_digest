@@ -6,8 +6,9 @@ import hashlib
 import json
 import re
 import time
+from dataclasses import replace
 
-from .config import IncompleteHistory
+from .config import Deferred, IncompleteHistory
 from .forwards import ForwardReader
 from .models import Message
 
@@ -125,7 +126,7 @@ def normalize(raw, group, *, include_names=False):
         and isinstance(s.get("data"), dict)
         and s["data"].get("id") is not None
     ]
-    return Message(key, mid, stamp, sender, text, seq, forwards, name, replies)
+    return Message(key, mid, stamp, sender, text, seq, forwards, name, replies, str(group))
 
 
 class HistoryReader:
@@ -134,6 +135,8 @@ class HistoryReader:
         self.cache = cache
 
     async def read(self, adapter, task, start, end, *, progress=None, refresh=False):
+        if len(task.sources) > 1:
+            return await self._read_many(adapter, task, start, end, progress=progress, refresh=refresh)
         found, cursor, anchors, previous = {}, None, set(), None
         forwards = ForwardReader(adapter, task, self.limits, self.journal)
         started = time.monotonic()
@@ -257,4 +260,51 @@ class HistoryReader:
             pages=page_number,
             duration_ms=round((time.monotonic() - started) * 1000, 1),
         )
+        self.pages_read, self.forward_attempts = page_number, forwards.attempts
         return messages, notes
+
+    async def _read_many(self, adapter, task, start, end, *, progress, refresh):
+        messages, notes = [], []
+        pages = chars = attempts = 0
+        generation = None
+        for group in task.sources:
+            if pages >= self.limits.max_pages:
+                raise IncompleteHistory("聚合来源群的历史读取达到总页数上限，未覆盖全部来源。")
+            limits = replace(
+                self.limits,
+                max_pages=self.limits.max_pages - pages,
+                max_messages=self.limits.max_messages - len(messages),
+                max_history_chars=self.limits.max_history_chars - chars,
+            )
+            child = replace(
+                task,
+                source_group=group,
+                additional_source_groups=(),
+                forward_limit=task.forward_limit - attempts,
+            )
+            reader = HistoryReader(limits, self.journal, cache=self.cache)
+
+            def reading(current_pages, current_messages):
+                if progress:
+                    progress(pages + current_pages, len(messages) + current_messages)
+
+            try:
+                found, current_notes = await reader.read(
+                    adapter, child, start, end, progress=reading, refresh=refresh
+                )
+            except IncompleteHistory as exc:
+                raise IncompleteHistory(f"来源群 {group} 读取未完成：{exc}") from exc
+            if generation is not None and adapter.generation != generation:
+                raise Deferred("聚合读取期间连接发生变化，将重新确认全部来源群。")
+            generation = adapter.generation
+            pages += reader.pages_read
+            attempts += reader.forward_attempts
+            chars += sum(len(m.text) for m in found)
+            messages.extend(found)
+            notes.extend(current_notes)
+        self.pages_read, self.forward_attempts = pages, attempts
+        messages.sort(key=lambda m: (m.time, m.group_id, m.seq, m.key))
+        self.journal.record(
+            "多群历史聚合完成", groups=list(task.sources), messages=len(messages), pages=pages
+        )
+        return messages, list(dict.fromkeys(notes))

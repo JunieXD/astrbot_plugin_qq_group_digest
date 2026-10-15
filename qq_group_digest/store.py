@@ -261,7 +261,13 @@ class Store:
             return
         reread = any(
             row["config"].get(k, False) != config.get(k, False)
-            for k in ("read_forwards", "forward_limit", "attribute_speakers")
+            for k in (
+                "read_forwards",
+                "forward_limit",
+                "attribute_speakers",
+                "source_group",
+                "additional_source_groups",
+            )
         )
         # Image statistics need historical member names even with optional
         # textual attribution disabled. A fetched plain snapshot may lack them.

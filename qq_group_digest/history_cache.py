@@ -15,7 +15,7 @@ class HistoryCache:
     def scope(adapter, task):
         # Names change the collected data. Prompts/providers/forward rendering do not.
         parts = (
-            2,
+            3,
             adapter.pid,
             adapter.account,
             task.source_group,

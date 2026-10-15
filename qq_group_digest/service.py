@@ -301,6 +301,8 @@ class Service:
         digest = self.with_activity(task, digest, messages, start, end, adapter.account)
         if task.mode != IMAGE_MODE and not task.album_enabled:
             return digest
+        if len(task.sources) > 1:
+            return replace(digest, group_name=task.label)
         name_reader = getattr(adapter, "group_name", None)
         name = await name_reader(task.source_group) if callable(name_reader) else ""
         return replace(digest, group_name=name)

@@ -31,7 +31,8 @@ class Transcript:
         people, labels = {}, {}
         self.sources = dict(self.indexed)
         origin = min([start, *(m.time for m in messages)])
-        native = {m.message_id: i + 1 for i, m in enumerate(messages)}
+        native = {(m.group_id, m.message_id): i + 1 for i, m in enumerate(messages)}
+        groups = {group: i + 1 for i, group in enumerate(task.sources)} if len(task.sources) > 1 else {}
         self.records = []
         for i, message in enumerate(messages, 1):
             person = people.setdefault(message.sender, len(people) + 1)
@@ -45,17 +46,24 @@ class Transcript:
             replies = []
             for reply in message.reply_ids:
                 text = text.replace(f"[引用消息 {reply}]", "").strip()
-                replies.append(native.get(reply, 0))
+                replies.append(native.get((message.group_id, reply), 0))
             if text or replies:
                 record = [i, message.time - origin, label, text]
-                if replies:
+                if replies or groups:
                     record.append(list(dict.fromkeys(replies)))
+                if groups:
+                    record.append(groups[message.group_id])
                 self.records.append(record)
         self.header = {
             "time_origin": datetime.fromtimestamp(origin, ZoneInfo(task.timezone)).isoformat(),
             "period_start": start - origin,
             "columns": ["id", "seconds", "speaker", "text", "reply_to(optional;0=unavailable)"],
         }
+        if groups:
+            self.header["columns"].append("group")
+            self.header["group_note"] = (
+                "不同group是独立群聊，不把跨群相邻消息当成对话或互相回应；相关主题合并整理。"
+            )
 
     def serialize(self, records):
         # Line boundaries aid reference lookup at negligible cost in tokens.
@@ -66,6 +74,8 @@ class Transcript:
             row = [record[0], record[1], f"u{record[2]}", record[3]]
             if len(record) > 4:
                 row.append(record[4])
+            if len(record) > 5:
+                row.append(record[5])
             rows.append(row)
         return encode(self.header)[:-1] + ',"messages":[\n' + ",\n".join(map(encode, rows)) + "\n]}"
 

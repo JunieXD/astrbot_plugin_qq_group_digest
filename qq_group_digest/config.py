@@ -98,11 +98,19 @@ class Task:
     album_enabled: bool = False
     album_target_groups: tuple[str, ...] = ()
     album_name: str = "鼠群日报"
+    additional_source_groups: tuple[str, ...] = ()
+
+    @property
+    def sources(self):
+        return tuple(dict.fromkeys((self.source_group, *self.additional_source_groups)))
 
     @property
     def key(self):
         # A display-name edit must not reset the checkpoint.
-        return hashlib.sha256(f"{self.bot_qq}:{self.source_group}".encode()).hexdigest()[:20]
+        identity = self.source_group
+        if len(self.sources) > 1:
+            identity = "multi:" + ",".join(sorted(self.sources))
+        return hashlib.sha256(f"{self.bot_qq}:{identity}".encode()).hexdigest()[:20]
 
     @property
     def label(self):
@@ -110,9 +118,7 @@ class Task:
 
     @property
     def targets(self):
-        return tuple(
-            dict.fromkeys((*self.target_groups, *((self.source_group,) if self.include_source else ())))
-        )
+        return tuple(dict.fromkeys((*self.target_groups, *(self.sources if self.include_source else ()))))
 
     def dump(self):
         return asdict(self)
@@ -126,6 +132,7 @@ class Task:
                 "times": tuple(data["times"]),
                 "poster_excluded_members": tuple(data.get("poster_excluded_members", ())),
                 "album_target_groups": tuple(data.get("album_target_groups", ())),
+                "additional_source_groups": tuple(data.get("additional_source_groups", ())),
             }
         )
 
@@ -194,7 +201,7 @@ class Settings:
     llm_generation: GenerationOptions = field(default_factory=GenerationOptions)
 
     def find(self, group):
-        found = [t for t in self.tasks if t.source_group == group]
+        found = [t for t in self.tasks if group in t.sources]
         if len(found) != 1:
             raise DigestError("请先在配置中为这个来源群添加一条任务。")
         return found[0]
@@ -212,9 +219,13 @@ def parse_settings(raw):
         poster = obj(d.get("poster", {}), "海报设置")
         album = obj(d.get("album", {}), "群相册设置")
         gid = identifier(d.get("source_group"), "来源群")
-        if gid in seen:
-            raise DigestError(f"来源群 {gid} 重复；请把多个目标群放在同一条任务中。")
-        seen.add(gid)
+        additional = d.get("additional_source_groups", [])
+        if not isinstance(additional, list) or len(additional) > 9:
+            raise DigestError("一起总结的其他群应逐条填写，最多9个。")
+        sources = tuple(dict.fromkeys((gid, *(identifier(g, "其他来源群") for g in additional))))
+        if duplicate := seen.intersection(sources):
+            raise DigestError(f"来源群 {sorted(duplicate)[0]} 重复；请把聚合来源和目标放在同一条任务中。")
+        seen.update(sources)
         targets = d.get("target_groups", [])
         if not isinstance(targets, list) or len(targets) > 20:
             raise DigestError("目标群应逐条填写，最多 20 个。")
@@ -237,6 +248,7 @@ def parse_settings(raw):
             raise DigestError("请选择有效的展示方式。")
         kw = {
             "source_group": gid,
+            "additional_source_groups": sources[1:],
             "name": name,
             "focus": focus,
             "mode": mode,

@@ -88,7 +88,7 @@ def build_activity(messages, start, end, timezone, *, bot_id="", excluded_member
             continue
         # Normalized history uses the native sequence where available. A missing
         # key can still be deduplicated without flattening its forwarded content.
-        identity = message.key or (message.message_id, message.time, qq)
+        identity = message.key or (message.group_id, message.message_id, message.time, qq)
         if identity in seen:
             continue
         seen.add(identity)
