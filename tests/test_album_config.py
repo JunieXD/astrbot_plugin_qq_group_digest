@@ -17,6 +17,7 @@ def configured(album=None, **values):
 def test_legacy_settings_do_not_enable_album_or_change_delivery_targets():
     task = configured(target_groups=["987654321"])
     assert not task.album_enabled
+    assert task.album_send_image
     assert task.album_name == "鼠群日报"
     assert task.album_target_groups == ()
     assert task.targets == ("987654321", "123456789")
@@ -48,6 +49,7 @@ def test_disabled_album_accepts_empty_selection_and_name():
         {"enabled": True},
         {"enabled": True, "target_groups": ["987654321"], "name": " "},
         {"enabled": "true"},
+        {"send_image": "false"},
         {"target_groups": "987654321"},
         {"target_groups": ["invalid"]},
         {"target_groups": [True]},
@@ -63,6 +65,7 @@ def test_disabled_album_accepts_empty_selection_and_name():
         "enabled_without_target",
         "enabled_without_name",
         "invalid_switch",
+        "invalid_image_switch",
         "targets_not_list",
         "invalid_group",
         "boolean_group",
@@ -84,11 +87,12 @@ def test_album_task_roundtrip_and_legacy_snapshot_are_backward_compatible():
     task = configured({"enabled": True, "target_groups": ["987654321"], "name": "日报"})
     assert Task.restore(json.loads(json.dumps(task.dump(), ensure_ascii=False))) == task
     legacy = task.dump()
-    for key in ("album_enabled", "album_target_groups", "album_name"):
+    for key in ("album_enabled", "album_target_groups", "album_name", "album_send_image"):
         legacy.pop(key)
     restored = Task.restore(legacy)
     assert not restored.album_enabled and restored.album_name == "鼠群日报"
     assert restored.album_target_groups == ()
+    assert restored.album_send_image
     assert replace(task, album_name="另一本日报").key == task.key
 
 
@@ -100,3 +104,11 @@ def test_album_schema_defaults_match_runtime():
     assert task.album_enabled == Task.album_enabled == values["enabled"]
     assert task.album_name == Task.album_name == values["name"]
     assert task.album_target_groups == Task.album_target_groups == tuple(values["target_groups"])
+    assert task.album_send_image == Task.album_send_image == values["send_image"]
+
+
+def test_album_image_switch_does_not_reset_task_identity():
+    task = configured({"enabled": True, "target_groups": ["987654321"], "send_image": False})
+    assert not task.album_send_image
+    assert Task.restore(json.loads(json.dumps(task.dump()))) == task
+    assert replace(task, album_send_image=True).key == task.key

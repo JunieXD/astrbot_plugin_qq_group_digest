@@ -38,7 +38,15 @@ class Service:
         self.last_cleanup = 0
         self.album = AlbumArchive(self)
         self.delivery = Delivery(
-            store, router, guard, settings, journal, self.allowed, clock=clock, archive_ready=self.album.ready
+            store,
+            router,
+            guard,
+            settings,
+            journal,
+            self.allowed,
+            clock=clock,
+            archive_ready=self.album.ready,
+            omit_chat_images=self.album.omit_chat_images,
         )
 
     def lock(self, key):

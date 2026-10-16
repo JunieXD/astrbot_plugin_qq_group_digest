@@ -13,11 +13,22 @@ from .render import make_payloads, payload_fingerprint
 
 class Delivery:
     def __init__(
-        self, store, router, guard, settings, journal, allowed, *, clock=time.time, archive_ready=None
+        self,
+        store,
+        router,
+        guard,
+        settings,
+        journal,
+        allowed,
+        *,
+        clock=time.time,
+        archive_ready=None,
+        omit_chat_images=None,
     ):
         self.store, self.router, self.guard = store, router, guard
         self.settings, self.journal, self.allowed, self.clock = settings, journal, allowed, clock
         self.archive_ready = archive_ready
+        self.omit_chat_images = omit_chat_images
 
     async def process(self, run):
         task = Task.restore(run["config"])
@@ -35,6 +46,15 @@ class Delivery:
                 continue
             if self.archive_ready and not await self.archive_ready(run, target):
                 continue
+            if self.omit_chat_images and await self.omit_chat_images(run, target):
+                count = await self.store.call("skip_chat_images", run["id"], target)
+                if count:
+                    self.journal.record(
+                        "图片已存相册，省略群内图片", run=run["id"], target=target, count=count
+                    )
+                    group_rows = [
+                        r for r in await self.store.call("deliveries", run["id"]) if r["target"] == target
+                    ]
             # Keep order within a target. Other destinations may proceed independently.
             if any(r["state"] in {"submitted", "unknown", "blocked"} for r in group_rows):
                 continue

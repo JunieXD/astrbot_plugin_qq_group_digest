@@ -68,6 +68,22 @@ class AlbumArchive:
         # Explicit administrator skips intentionally release the following send.
         return all(row["state"] in {"uploaded", "sent", "skipped"} for row in rows)
 
+    async def omit_chat_images(self, run, target):
+        live = self.s.current(run["task"])
+        if (
+            live is None
+            or not live.album_enabled
+            or live.album_send_image
+            or target not in live.album_target_groups
+        ):
+            return False
+        rows = [row for row in await self.s.store.call("archive_rows", run["id"]) if row["target"] == target]
+        # Only a confirmed, complete copy replaces the chat images. Skipping an
+        # archive or enabling albums after generation must not discard a digest.
+        return bool(rows) and all(
+            row["state"] in {"uploaded", "sent"} and row["album_name"] == live.album_name for row in rows
+        )
+
     async def process(self, current):
         targets = current.album_target_groups if current.album_enabled else ()
         await self.s.store.call("archive_cancel_removed", current.key, targets)

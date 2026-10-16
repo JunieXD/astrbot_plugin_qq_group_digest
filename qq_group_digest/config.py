@@ -98,6 +98,7 @@ class Task:
     album_enabled: bool = False
     album_target_groups: tuple[str, ...] = ()
     album_name: str = "鼠群日报"
+    album_send_image: bool = True
     additional_source_groups: tuple[str, ...] = ()
 
     @property
@@ -291,6 +292,7 @@ def parse_settings(raw):
             dict.fromkeys(identifier(q, "不参与统计的 QQ") for q in excluded)
         )
         kw["album_enabled"] = flag(album.get("enabled", False), "存到群相册")
+        kw["album_send_image"] = flag(album.get("send_image", True), "上传相册后仍发群图片")
         album_targets = album.get("target_groups", [])
         if not isinstance(album_targets, list) or len(album_targets) > 20:
             raise DigestError("上传到哪些群应逐条填写群号，最多 20 个。")

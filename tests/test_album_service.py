@@ -129,12 +129,16 @@ async def test_disabled_album_never_creates_archive_intents(store, task, setting
     assert await store.call("deliveries", run["id"])
 
 
+@pytest.mark.parametrize("send_image", [True, False])
 async def test_opted_in_private_preview_can_render_but_never_plans_album_uploads(
-    store, task, settings, journal, tmp_path
+    store, task, settings, journal, tmp_path, send_image
 ):
     service, api, poster, transport, task = configured(
         store, task, settings, journal, tmp_path, mode=IMAGE_MODE
     )
+    task = replace(task, album_send_image=send_image)
+    settings = service.settings()
+    service.settings = lambda: replace(settings, tasks=(task,))
     api.history = [raw_message(10, NOW - 1), raw_message(1, NOW - 86400 - 601)]
     digest, start, end = await service.preview(task)
     payloads = await service.payloads(task, digest, start, end, api.account)

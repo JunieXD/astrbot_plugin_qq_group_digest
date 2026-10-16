@@ -470,6 +470,20 @@ class Store:
                 (did, max_attempts),
             )
 
+    def skip_chat_images(self, rid, target):
+        from .images import image_files
+
+        with self.db:
+            count = 0
+            for row in self.deliveries(rid):
+                if row["target"] == target and image_files(row["payload"]):
+                    count += self.db.execute(
+                        "UPDATE deliveries SET state='skipped',error='图片已存相册，不再单独发送',next_try=0 "
+                        "WHERE id=? AND state IN ('pending','blocked')",
+                        (row["id"],),
+                    ).rowcount
+        return count
+
     def replace_pending_target(self, rid, target, mode, payload):
         with self.db:
             rows = self.db.execute(
