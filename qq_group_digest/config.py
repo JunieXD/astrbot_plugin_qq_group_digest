@@ -86,6 +86,7 @@ class Task:
     max_topics: int = 8
     summary_chars: int = 1200
     attribute_speakers: bool = False
+    clean_display_names: bool = True
     card_title: str = ""
     content_title: str = ""
     poster_theme: str = "cream"
@@ -311,6 +312,7 @@ def parse_settings(raw):
             raise DigestError("开启存到群相册后，请填写相册名称。")
         for key in ["read_forwards", "fallback_to_plain", "attribute_speakers"]:
             kw[key] = flag(more.get(key, False), key)
+        kw["clean_display_names"] = flag(more.get("clean_display_names", True), "简化展示昵称")
         for key, low, high in [
             ("overlap_minutes", 0, 360),
             ("initial_hours", 1, 168),

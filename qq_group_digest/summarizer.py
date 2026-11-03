@@ -10,6 +10,7 @@ from dataclasses import replace
 
 from .attribution import missing_attributions, resolve_names
 from .config import DigestError
+from .display_names import display_item
 from .llm_client import LLMClient as LLMClient
 from .llm_client import usable_completion as usable_completion
 from .models import Digest
@@ -163,6 +164,8 @@ class Summarizer:
                     # A publication budget is different from JSON/source validity.
                     # Only an indivisibly large item needs semantic rewriting.
                     resolved = resolve_names(result, transcript.sources, task.attribute_speakers)
+                    if task.clean_display_names:
+                        resolved = [display_item(item) for item in resolved]
                     if any(len(item.title) + len(item.body) > task.summary_chars for item in resolved):
                         raise OutputError(
                             "length",
@@ -265,7 +268,8 @@ class Summarizer:
                 seen.add(key)
         selected, used = [], 0
         for item in result:
-            size = len(item.title) + len(item.body)
+            shown = display_item(item) if task.clean_display_names else item
+            size = len(shown.title) + len(shown.body)
             if len(selected) >= task.max_topics or used + size > task.summary_chars:
                 break
             if (

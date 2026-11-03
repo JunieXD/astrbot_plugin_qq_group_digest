@@ -4,6 +4,7 @@ import hashlib
 import re
 
 from .config import DigestError
+from .display_names import display_digest
 from .schedule import period_text
 
 
@@ -93,6 +94,8 @@ def bodies(digest):
 
 
 def full_text(task, digest, start, end):
+    if task.clean_display_names:
+        digest = display_digest(digest)
     pieces = [header(task, start, end), *bodies(digest)]
     return "\n\n".join(pieces)
 
@@ -112,6 +115,8 @@ def split_text(text, limit):
 
 def make_payloads(task, digest, start, end, account, limits, mode=None):
     mode = mode or task.mode
+    if task.clean_display_names:
+        digest = display_digest(digest)
     if not digest.items:
         return []
     title = header(task, start, end)

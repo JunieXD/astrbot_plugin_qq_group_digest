@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from .attribution import poster_points
 from .config import IMAGE_MODE, DigestError
+from .display_names import display_digest
 from .render import default_title, display_text, make_payloads, readable_body
 from .schedule import poster_period
 
@@ -67,6 +68,8 @@ class Presentation:
             return result
 
     async def context(self, task, digest, start, end):
+        if task.clean_display_names:
+            digest = display_digest(digest)
         activity = digest.activity
         leaders = list(activity.members[: task.poster_leaderboard_size]) if activity else []
         users = {s.qq for item in digest.items for s in item.speakers}
