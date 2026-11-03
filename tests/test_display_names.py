@@ -40,6 +40,10 @@ from .test_poster_integration import presentation
         ("小明-代购ChatGPT", "小明"),
         ("小明-出售 Codex 额度 私聊", "小明"),
         ("小明-出codex额度", "小明"),
+        ("小明：低价代充GPT", "小明"),
+        ("：接保研辅导", "群友"),
+        ("、出Codex额度", "群友"),
+        ("；低价代充GPT", "群友"),
         ("小明-不接保研辅导", "小明-不接保研辅导"),
         ("23-uestc-小明", "23-uestc-小明"),
         ("24-四非 洛书", "24-四非 洛书"),
@@ -61,6 +65,19 @@ from .test_poster_integration import presentation
 def test_clean_name_preserves_subject_and_removes_only_defined_formats(raw, expected):
     assert clean_name(raw) == expected
     assert clean_name(clean_name(raw)) == expected
+
+
+def test_cleanup_remains_stable_when_rendering_the_same_name_more_than_once():
+    raw = "：接保研辅导"
+    indexed = {"u1": Message("a", "1", NOW, "111111", "", sender_name=raw)}
+    item = resolve_names([Item("信息", "群友u1反馈：甲校报名明天截止。", ("u1",))], indexed, True)[0]
+    digest = Digest([item])
+    task = Task("123456789")
+    text = full_text(task, digest, NOW - 3600, NOW)
+    payload = make_payloads(task, digest, NOW - 3600, NOW, "333333", Limits())[0]
+    assert payload["message"][0]["data"]["text"] == text
+    assert "接保研辅导" not in text
+    assert "“群友”" in text
 
 
 @pytest.mark.parametrize("opening,closing", tuple(zip("([【［〔{｛「『《〈", ")]】］〕}｝」』》〉")))

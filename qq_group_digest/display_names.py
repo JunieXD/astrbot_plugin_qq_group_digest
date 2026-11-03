@@ -16,7 +16,8 @@ _CONTROLS = dict.fromkeys(
     map(ord, "\u00ad\u200b\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2060\u2066\u2067\u2068\u2069\ufeff")
 )
 _SEPARATORS = "-‐‑‒–—―_－﹣|｜丨"
-_BOUNDARY = rf"(?:^|[\s{re.escape(_SEPARATORS)}]+)"
+_EDGE = " " + _SEPARATORS + "、，,;；:："
+_BOUNDARY = rf"(?:^|[\s{re.escape(_EDGE)}]+)"
 # These describe particular offers at the start of an appended segment. They
 # are not a blacklist of subjects such as GPT, school names or 辅导 in general.
 _OFFERS = (
@@ -45,10 +46,11 @@ def clean_name(name):
             visible.append(char)
     value = re.sub(r"\s+", " ", "".join(visible)).strip()
     value = re.split(r"[|｜丨]", value, maxsplit=1)[0]
+    value = value.strip(_EDGE)
     matches = [match for rule in _SUFFIXES if (match := rule.search(value))]
     if matches:
         value = value[: min(match.start() for match in matches)]
-    return value.strip(" " + _SEPARATORS + "、，,;；:：") or "群友"
+    return value.strip(_EDGE) or "群友"
 
 
 def _quoted_names(text, names):

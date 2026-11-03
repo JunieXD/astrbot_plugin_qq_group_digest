@@ -120,7 +120,7 @@ def make_payloads(task, digest, start, end, account, limits, mode=None):
     if not digest.items:
         return []
     title = header(task, start, end)
-    complete = full_text(task, digest, start, end)
+    complete = "\n\n".join([title, *bodies(digest)])
     if mode == "图片海报":
         raise DigestError("图片海报需要先通过本地渲染生成图片。")
     if mode == "普通消息·整篇":
