@@ -13,7 +13,7 @@ class RecoveryPending(Deferred):
     """A known send cooldown; no platform write has been attempted."""
 
 
-def transient(exc):
+def transient(exc, action):
     """A failure that says nothing about the request itself.
 
     Besides transport errors, NapCat answers "Timeout: ..." when the QQ server
@@ -22,6 +22,10 @@ def transient(exc):
     """
     if type(exc).__name__ in {"TimeoutError", "NetworkError", "ApiNotAvailable", "ConnectionError"}:
         return True
+    if action == "get_forward_msg":
+        # A single forward that never loads must not pause every other read;
+        # forward expansion already degrades to leaving it unexpanded.
+        return False
     result = getattr(exc, "result", None)
     message = result.get("message") if isinstance(result, dict) else None
     return isinstance(message, str) and message.startswith("Timeout")
@@ -159,7 +163,7 @@ class Adapter:
                 self.journal.record(
                     "接口查询失败", api=action, platform=self.pid, error_type=type(exc).__name__
                 )
-                if transient(exc):
+                if transient(exc, action):
                     await self.cooldown(pace.failure_cooldown_seconds)
                     await self.store.call(
                         "extend",

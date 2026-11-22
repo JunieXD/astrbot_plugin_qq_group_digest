@@ -215,38 +215,41 @@ class AlbumArchive:
         async def action():
             try:
                 await self.preflight(row, task, adapter)
-            except Deferred as exc:
-                raise self.s.guard.deferred_error(str(exc)) from exc
-            if creating:
-                # Other tasks/users may have created it while this write waited
-                # for the shared account queue. Recheck before any new intent.
-                appeared = await transport.find_album(row["target"], row["album_name"])
-                if appeared:
-                    await self.s.store.call("archive_result", row["id"], "pending", appeared)
+                if creating:
+                    # Other tasks/users may have created it while this write waited
+                    # for the shared account queue. Recheck before any new intent.
+                    appeared = await transport.find_album(row["target"], row["album_name"])
+                    if appeared:
+                        await self.s.store.call("archive_result", row["id"], "pending", appeared)
+                        self.s.wake.set()
+                        return
+                    aid = await transport.create_album(row["target"], row["album_name"], on_submit=submit)
+                    await self.s.store.call("archive_created", row["id"], aid)
+                    self.s.journal.record("群相册创建成功", target=row["target"], album_id=aid)
                     self.s.wake.set()
-                    return
-                aid = await transport.create_album(row["target"], row["album_name"], on_submit=submit)
-                await self.s.store.call("archive_created", row["id"], aid)
-                self.s.journal.record("群相册创建成功", target=row["target"], album_id=aid)
-                self.s.wake.set()
-            else:
-                receipt = await transport.upload(
-                    row["target"],
-                    album_id,
-                    row["album_name"],
-                    local_image_path(row["file"]),
-                    row["description"],
-                    on_submit=submit,
-                )
-                await self.s.store.call("archive_result", row["id"], "uploaded", album_id, receipt)
-                self.s.journal.record(
-                    "群相册归档成功",
-                    run=row["run"],
-                    target=row["target"],
-                    part=row["part"],
-                    album_id=album_id,
-                )
-                self.s.wake.set()
+                else:
+                    receipt = await transport.upload(
+                        row["target"],
+                        album_id,
+                        row["album_name"],
+                        local_image_path(row["file"]),
+                        row["description"],
+                        on_submit=submit,
+                    )
+                    await self.s.store.call("archive_result", row["id"], "uploaded", album_id, receipt)
+                    self.s.journal.record(
+                        "群相册归档成功",
+                        run=row["run"],
+                        target=row["target"],
+                        part=row["part"],
+                        album_id=album_id,
+                    )
+                    self.s.wake.set()
+            except Deferred as exc:
+                # Only the steps before the submission defer (preflight, the album
+                # list, cookies). Nothing was written, so the shared queue must not
+                # count it as a failed write.
+                raise self.s.guard.deferred_error(str(exc)) from exc
 
         settings = self.s.settings()
         args = dict(
@@ -288,7 +291,8 @@ class AlbumArchive:
                 )
             elif latest["state"] in {"pending", "render"}:
                 if isinstance(exc, (Deferred, self.s.guard.deferred_error)):
-                    await self.defer(row, str(exc), getattr(exc, "seconds", 60), count=False)
+                    seconds = getattr(exc, "seconds", getattr(exc.__cause__, "seconds", 60))
+                    await self.defer(row, str(exc), seconds, count=False)
                 else:
                     await self.defer(row, "群相册归档准备失败，请检查插件日志。", 300)
             if isinstance(exc, asyncio.CancelledError):

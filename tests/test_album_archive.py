@@ -244,3 +244,49 @@ async def test_manual_archive_is_idempotent_and_target_must_be_configured(store,
     with pytest.raises(DigestError, match="不在"):
         await s.album.plan_existing(run, task, "999999999")
     assert len(await store.call("archive_rows", rid)) == 1
+
+
+async def test_deferred_read_inside_the_queue_is_not_a_failed_write(store, task, settings, journal, tmp_path):
+    from qq_group_digest.album_transport import AlbumTransport
+    from qq_group_digest.pacing import get_guard
+    from qq_group_digest.platform import Adapter
+
+    from .test_delivery import Router
+    from .test_platform import ActionFailed, Bot
+
+    settings = replace(settings, pace=replace(settings.pace, failure_threshold=1))
+    service, task, rid, _ = await prepared(store, task, settings, journal)
+
+    class AlbumBot(Bot):
+        album_reads = 0
+
+        async def call_action(self, action, **params):
+            self.calls.append(action)
+            if action == "get_status":
+                return {"online": True}
+            if action == "get_group_member_info":
+                return {"user_id": "111111111"}
+            if action == "nc_get_packet_status":
+                return None
+            if action == "get_qun_album_list":
+                self.album_reads += 1
+                if self.album_reads == 2:  # The recheck inside the shared queue.
+                    raise ActionFailed("Timeout: NTEvent serviceAndMethod:albumList")
+                return {"album_list": [], "has_more": False}
+            raise AssertionError(action)
+
+    async def no_sleep(_seconds):
+        pass
+
+    bot = AlbumBot()
+    adapter = Adapter("platform", bot, store, service.settings, journal, clock=lambda: NOW, sleep=no_sleep)
+    await adapter.check_connection()
+    service.router = Router(adapter)
+    service.guard = get_guard(service.context, tmp_path)
+    service.album.transport = AlbumTransport
+    await service.album.process(task)
+    assert bot.album_reads == 2 and "send_packet" not in bot.calls
+    row = (await store.call("archive_rows", rid))[0]
+    assert (row["state"], row["failures"], row["next_try"]) == ("pending", 0, NOW + 600)
+    assert service.guard.accounts["platform"].get("failures", 0) == 0
+    assert not service.guard.accounts["platform"].get("paused_until")

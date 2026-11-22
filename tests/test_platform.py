@@ -401,3 +401,35 @@ async def test_group_name_cache_is_bounded(store, settings, journal):
     adapter._group_names.update({f"111111111:{group}": ("旧群名", NOW - 1) for group in range(10000, 10200)})
     assert await adapter.group_name("123456789") == "真实群名"
     assert len(adapter._group_names) == 128
+
+
+async def test_forward_timeout_leaves_it_unexpanded_without_pausing_reads(store, settings, task, journal):
+    from dataclasses import replace
+
+    from qq_group_digest.history import HistoryReader
+
+    from .conftest import raw_message
+
+    class HistoryBot(Bot):
+        async def call_action(self, action, **params):
+            self.calls.append((action, params.get("message_seq")))
+            if action == "get_group_msg_history":
+                if params.get("message_seq"):
+                    return {"messages": [raw_message(1, NOW - 100)]}
+                message = raw_message(10, NOW - 1)
+                message["message"].append({"type": "forward", "data": {"id": "forward-1"}})
+                return {"messages": [message]}
+            if action == "get_forward_msg":
+                raise ActionFailed("Timeout: NTEvent serviceAndMethod:getForwardMsg")
+            raise AssertionError(action)
+
+    async def no_sleep(_seconds):
+        pass
+
+    bot = HistoryBot()
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW, sleep=no_sleep)
+    await HistoryReader(settings.limits, journal).read(
+        adapter, replace(task, read_forwards=True), NOW - 60, NOW
+    )
+    assert [params for action, params in bot.calls if action == "get_group_msg_history"] == [None, "10"]
+    assert not await store.call("get", "read-cooldown:platform", 0)
