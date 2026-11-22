@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import uuid
 from dataclasses import replace
@@ -139,7 +138,8 @@ class Summarizer:
                             self.client.journal.record(
                                 "摘要结果缓存署名不足", group=task.source_group, phase=phase
                             )
-            operation = hashlib.sha256((job_id + prompt).encode()).hexdigest()
+            # A retried run sends the same prompt again; that is a new billed call.
+            operation = uuid.uuid4().hex
             for attempt in range(2):
                 if calls >= self.limits.llm_calls_per_run:
                     raise DigestError("本期模型调用次数达到上限。")

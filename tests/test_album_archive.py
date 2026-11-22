@@ -172,6 +172,24 @@ async def test_recovery_pause_before_submission_never_writes_or_counts_failure(
     assert not Transport.writes
 
 
+async def test_offline_account_defers_without_reads_or_counting_failure(store, task, settings, journal):
+    s, task, rid, api = await prepared(store, task, settings, journal)
+    reads = []
+
+    async def offline():
+        return False
+
+    async def read(action, **params):
+        reads.append(action)
+
+    api.online, api.read = offline, read
+    await s.album.process(task)
+    row = (await store.call("archive_rows", rid))[0]
+    assert row["state"] == "pending" and row["failures"] == 0
+    assert row["next_try"] == NOW + settings.pace.failure_cooldown_seconds
+    assert not reads and not Transport.writes
+
+
 async def test_last_minute_disable_and_send_quota_prevent_platform_write(store, task, settings, journal):
     from .test_delivery import Guard
 

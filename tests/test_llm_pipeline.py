@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from qq_group_digest.models import Message
 from qq_group_digest.summarizer import Summarizer
 
 from .conftest import NOW
+from .test_store import make_run
 
 
 async def test_retry_statistics_and_completed_work_reuse(store, settings, task, journal, tmp_path):
@@ -57,6 +59,36 @@ async def test_retry_statistics_and_completed_work_reuse(store, settings, task, 
         assert context.calls == 3
     finally:
         with_stats.close()
+
+
+async def test_rerun_of_a_timed_out_run_records_every_call(store, settings, task, journal, tmp_path):
+    class Context:
+        calls = 0
+
+        async def llm_generate(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError
+            content = json.dumps({"items": [{"title": "反馈", "body": "有条件限制。", "sources": ["u1"]}]})
+            return SimpleNamespace(role="assistant", completion_text=content, raw_completion=None)
+
+    settings = replace(settings, tasks=(replace(task, provider_id="test"),))
+    task = settings.tasks[0]
+    stats = UsageStore(tmp_path / "usage.db", settings.llm_statistics)
+    client = LLMClient(Context(), store, lambda: settings, journal, stats)
+    adapter = SimpleNamespace(pid="onebot", account="111")
+    messages = [Message("a", "1", NOW - 1, "222", "有条件限制。")]
+    rid = await make_run(store, task)
+    try:
+        for outcome in (pytest.raises(DigestError), contextlib.nullcontext()):
+            with outcome:
+                await Summarizer(client, settings.limits, run_id=rid).summarize(
+                    task, adapter, messages, NOW - 10, NOW
+                )
+        rows = stats.query(group_ids=[task.source_group])
+        assert [r["status"] for r in rows] == ["provider_error", "success"]
+    finally:
+        stats.close()
 
 
 @pytest.mark.parametrize("cancel", [True, False])

@@ -157,6 +157,35 @@ async def test_read_failure_cooldown_survives_reload_and_blocks_other_queries(st
     assert len(bot.calls) == 1
 
 
+class ActionFailed(Exception):
+    def __init__(self, message):
+        self.result = {"status": "failed", "retcode": 200, "message": message, "wording": message}
+
+
+@pytest.mark.parametrize(
+    ("message", "transient"),
+    [
+        ("Timeout: NTEvent serviceAndMethod:NodeIKernelGroupService/getMemberInfo", True),
+        ("群(123456789)成员111111111不存在", False),
+    ],
+)
+async def test_napcat_timeout_cools_down_without_failing_the_read(
+    store, settings, journal, message, transient
+):
+    class FailingBot(Bot):
+        async def call_action(self, action, **params):
+            self.calls.append(action)
+            raise ActionFailed(message)
+
+    bot = FailingBot()
+    adapter = Adapter("platform", bot, store, lambda: settings, journal, clock=lambda: NOW)
+    with pytest.raises(DigestError) as raised:
+        await adapter.read("get_group_member_info", group_id="123456789", user_id="111111111")
+    assert isinstance(raised.value, Deferred) is transient
+    cooldown = await store.call("get", "read-cooldown:platform", 0)
+    assert cooldown == (NOW + settings.pace.failure_cooldown_seconds if transient else 0)
+
+
 async def test_reconnection_rejects_old_history_cursor_before_call(store, settings, journal):
     bot = Bot()
     bot.result = {"messages": []}

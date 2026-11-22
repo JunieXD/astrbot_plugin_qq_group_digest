@@ -177,6 +177,12 @@ class AlbumArchive:
         transport = self.transport(adapter, self.s.journal)
         # Resolve the name from a complete list; never infer absence from a partial page.
         await self.preflight(row, task, adapter)
+        # The member and album reads below go to the QQ server and only time out
+        # while the account is offline; get_status is answered by NapCat itself.
+        if not await adapter.online():
+            raise Deferred(
+                "机器人 QQ 当前离线，暂缓群相册归档。", self.s.settings().pace.failure_cooldown_seconds
+            )
         member = await adapter.read("get_group_member_info", group_id=row["target"], user_id=adapter.account)
         if not isinstance(member, dict) or str(member.get("user_id")) != adapter.account:
             raise DigestError("无法确认机器人在相册目标群中的成员身份。")
